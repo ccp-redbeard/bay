@@ -566,6 +566,11 @@ type HeldRecords = std::sync::Mutex<
     >,
 >;
 
+/// One [`Chain::read_all`] at a time reads the records this process does not hold, so a read
+/// beside it (G616: the sections of a status run side by side) finds them held and reads none
+/// of them again.
+static READING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn held_table() -> &'static HeldRecords {
     static TABLE: std::sync::OnceLock<HeldRecords> = std::sync::OnceLock::new();
     TABLE.get_or_init(HeldRecords::default)
@@ -779,6 +784,9 @@ impl<'a> Chain<'a> {
                 Some((head, committed, id))
             })
             .collect();
+        let _turn = READING
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut known = held_records(self.git, &heads);
         let unread: Vec<&String> = heads
             .iter()

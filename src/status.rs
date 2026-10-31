@@ -233,6 +233,134 @@ pub(crate) const fn ended(state: crate::change::ChangeState) -> bool {
     )
 }
 
+/// The changes shown and every other section of a status of `ids` at `trunk`.
+fn read_sections(
+    repo: &Repo,
+    trunk: &str,
+    ids: &[String],
+    named: bool,
+    view: Option<&str>,
+    targets_fetched: bool,
+    read: &Read,
+) -> (Result<Shown, String>, Sections) {
+    let me = crate::change::current_actor(&repo.common_dir)
+        .ok()
+        .map(|actor| actor.name);
+    let me = me.as_deref();
+    // G616 (a fleet finding, 2026-10-31: after its one round trip a status spent about 6 s
+    // reading this store, each section after the one before): every section only reads this
+    // store, so each runs beside the others, and the read costs about its longest section.
+    std::thread::scope(|scope| {
+        let leftovers = scope.spawn(move || leftovers(repo, trunk, view, me));
+        let quarantines = scope.spawn(move || quarantines(repo, trunk));
+        let flakes = scope.spawn(move || flake_rows(repo, trunk, read));
+        let red_now = scope.spawn(move || red_rows(repo, trunk));
+        let targets = scope.spawn(move || target_rows(repo, trunk, targets_fetched, read));
+        // G309: the flow of work, derived on read from the chains this repository holds.
+        let flow = scope.spawn(move || {
+            crate::flow::flow(repo, trunk).unwrap_or_else(|why| json!({"unread": why}))
+        });
+        let talks = scope.spawn(move || talk_rows(repo));
+        let unattributed = scope.spawn(move || unattributed_rows(repo, trunk));
+        // N-8: a held trunk is named, with where the hold comes from, its reason and its end.
+        let hold = scope.spawn(move || crate::hold::held(repo, trunk));
+        // N-20: each outside merge in the red window that pushed bay landings off the line.
+        let not_linear = scope.spawn(move || not_linear(&repo.git, trunk));
+        // R11: delivery that fails is never silent.
+        let wake_failing = scope.spawn(move || crate::log::wake_failing(&repo.git));
+        let shown = shown_changes(repo, ids, named, me, trunk, read);
+        let runner = shown.as_ref().map_or_else(
+            |_| Vec::new(),
+            |shown| crate::presence::runner_warnings(repo, shown.queued, trunk),
+        );
+        let sections = Sections {
+            runner,
+            leftovers: joined(leftovers),
+            quarantines: joined(quarantines),
+            flakes: joined(flakes),
+            red: joined(red_now),
+            targets: joined(targets),
+            flow: joined(flow),
+            talks: joined(talks),
+            unattributed: joined(unattributed),
+            hold: joined(hold),
+            not_linear: joined(not_linear),
+            wake_failing: joined(wake_failing),
+        };
+        (shown, sections)
+    })
+}
+
+/// The changes a listing describes and the ids it only names, and how many operations wait.
+struct Shown {
+    changes: Vec<Value>,
+    more: Vec<String>,
+    queued: usize,
+}
+
+/// What [`run`] reads beside the changes it describes (G616), each section on its own thread.
+struct Sections {
+    runner: Vec<Value>,
+    leftovers: Result<(Vec<Value>, Vec<String>), String>,
+    quarantines: Value,
+    flakes: Value,
+    red: (Value, Value),
+    targets: Value,
+    flow: Value,
+    talks: Value,
+    unattributed: Value,
+    hold: Option<crate::hold::Hold>,
+    not_linear: Vec<Value>,
+    wake_failing: Option<Value>,
+}
+
+/// What a section's thread returned; a panic in it is this thread's.
+fn joined<T>(section: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    section
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// The changes of `ids` a read describes. An agent reads this answer whole, so it has a budget
+/// (a fleet finding, 2026-10-26: a listing of 146 live changes ran to megabytes and minutes). At
+/// most LISTED changes are described, the reader's (`me`) own first; the rest are named, and
+/// `bay status <change>` reads one. A listing describes the reader's own changes; everyone
+/// else's are counted and named, so an agent's answer stays a few hundred tokens however busy
+/// the repository is.
+fn shown_changes(
+    repo: &Repo,
+    ids: &[String],
+    named: bool,
+    me: Option<&str>,
+    trunk: &str,
+    read: &Read,
+) -> Result<Shown, String> {
+    let pending = receipts::pending(repo);
+    let mut records = held_records(&Chain::new(&repo.git), ids, named)?;
+    let queued: usize = records.iter().map(crate::presence::waiting).sum();
+    records.sort_by_key(|record| me != Some(record.actor.name.as_str()));
+    let mine_only = ids.len() > 1 && me.is_some();
+    let (mut changes, mut more) = (Vec::new(), Vec::new());
+    for record in &records {
+        let others = mine_only && me != Some(record.actor.name.as_str());
+        if changes.len() >= LISTED || others {
+            more.push(record.id.clone());
+            continue;
+        }
+        let unsynced: Vec<&Receipt> = pending
+            .iter()
+            .map(|(_, receipt)| receipt)
+            .filter(|receipt| receipt.change == record.id)
+            .collect();
+        changes.push(describe(repo, record, trunk, &unsynced, read)?);
+    }
+    Ok(Shown {
+        changes,
+        more,
+        queued,
+    })
+}
+
 /// The records of `ids`, read in one batch of every chain (G200b), never one walk per change (a
 /// fleet finding, 2026-10-26: 2,408 state reads, a third of a five-minute status). One named
 /// change is read alone. A listing (`named` false) leaves out a copy of another change's chain,
@@ -482,8 +610,6 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
         targets: targets_fetched,
         talk_accept,
     } = refreshed;
-    let pending = receipts::pending(&repo);
-    let chain = Chain::new(&repo.git);
     // The runtime adapter is asked only for a change this read names: a listing of every
     // change stays bounded however many have landed.
     let named = change.is_some() || repo.view_change(dir).is_some();
@@ -491,58 +617,35 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
         registry: crate::registry::Registry::current(&repo.git)?,
         ask_runtime: ids.len() == 1 && named,
     };
-    let mut changes = Vec::new();
-    // An agent reads this answer whole, so it has a budget (a fleet finding, 2026-10-26: a
-    // listing of 146 live changes ran to megabytes and minutes). At most LISTED changes are
-    // described, the reader's own first; the rest are named, and `bay status <change>` reads one.
-    let me = crate::change::current_actor(&repo.common_dir)
-        .ok()
-        .map(|actor| actor.name);
-    let records = held_records(&chain, &ids, named)?;
-    let queued: usize = records.iter().map(crate::presence::waiting).sum();
-    let mut records = records;
-    records.sort_by_key(|record| me.as_deref() != Some(record.actor.name.as_str()));
-    // A listing describes the reader's own changes; everyone else's are counted and named, so
-    // an agent's answer stays a few hundred tokens however busy the repository is.
-    let mine_only = ids.len() > 1 && me.is_some();
-    let mut more = Vec::new();
-    for record in &records {
-        let others = mine_only && me.as_deref() != Some(record.actor.name.as_str());
-        if changes.len() >= LISTED || others {
-            more.push(record.id.clone());
-            continue;
-        }
-        let unsynced: Vec<&Receipt> = pending
-            .iter()
-            .map(|(_, receipt)| receipt)
-            .filter(|receipt| receipt.change == record.id)
-            .collect();
-        changes.push(describe(&repo, record, &trunk, &unsynced, &read)?);
-    }
     // A read of one change scans its own view only, never every view on the machine (a fleet
     // finding, 2026-10-26: 43 views cost a named status about 26 s).
-    let named = change.map(str::to_owned).or_else(|| repo.view_change(dir));
-    let (leftovers, more_leftovers) = leftovers(&repo, &trunk, named.as_deref(), me.as_deref())?;
-    let quarantines = quarantines(&repo, &trunk);
-    let flakes = flake_rows(&repo, &trunk, &read);
-    let (red_rows_now, red_pending) = red_rows(&repo, &trunk);
-    let targets = target_rows(&repo, &trunk, targets_fetched, &read);
-    // G309: the flow of work, derived on read from the chains this repository holds.
-    let flow = crate::flow::flow(&repo, &trunk).unwrap_or_else(|why| json!({"unread": why}));
+    let view = change.map(str::to_owned).or_else(|| repo.view_change(dir));
+    let (shown, sections) = read_sections(
+        &repo,
+        trunk.as_str(),
+        &ids,
+        named,
+        view.as_deref(),
+        targets_fetched,
+        &read,
+    );
+    let Shown { changes, more, .. } = shown?;
+    let (leftovers, more_leftovers) = sections.leftovers?;
+    let (red_rows_now, red_pending) = sections.red;
     let mut result = BayResult::ok(json!({
         "changes": changes,
         "more_changes": more_changes(&more),
-        "flakes": flakes,
-        "flow": flow,
+        "flakes": sections.flakes,
+        "flow": sections.flow,
         "leftovers": leftovers,
         "more_leftovers": more_changes(&more_leftovers),
-        "quarantines": quarantines,
+        "quarantines": sections.quarantines,
         "red": red_rows_now,
         "red_pending": red_pending,
-        "talks": talk_rows(&repo),
-        "targets": targets,
+        "talks": sections.talks,
+        "targets": sections.targets,
         "trunk": trunk,
-        "unattributed": unattributed_rows(&repo, &trunk),
+        "unattributed": sections.unattributed,
         // G305: whether bay's hook judges agents' Git commands in this repository: `on` when
         // the config at trunk declares an agent adapter (`bay doctor` checks this box has its
         // entries). Off, `unattributed` counts what went around bay.
@@ -551,15 +654,12 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
     if let (Some(detail), Some(accept)) = (result.detail.as_mut(), talk_accept) {
         detail["talk_accept"] = accept;
     }
-    // N-8: a held trunk is named, with where the hold comes from, its reason and its end.
-    if let (Some(detail), Some(hold)) = (result.detail.as_mut(), crate::hold::held(&repo, &trunk)) {
+    if let (Some(detail), Some(hold)) = (result.detail.as_mut(), sections.hold) {
         detail["hold"] = hold.to_json();
     }
-    let mut warnings = crate::presence::runner_warnings(&repo, queued, &trunk);
-    // N-20: each outside merge in the red window that pushed bay landings off the line.
-    warnings.extend(not_linear(&repo.git, &trunk));
-    // R11: delivery that fails is never silent.
-    warnings.extend(crate::log::wake_failing(&repo.git));
+    let mut warnings = sections.runner;
+    warnings.extend(sections.not_linear);
+    warnings.extend(sections.wake_failing);
     if let Some(detail) = result.detail.as_mut()
         && !warnings.is_empty()
     {
