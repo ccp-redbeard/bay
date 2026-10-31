@@ -558,6 +558,48 @@ fn parse_record(text: &str) -> Result<ChangeRecord, ChainError> {
     Ok(record)
 }
 
+/// The records [`Chain::read_all`] read in this process, by git directory and chain head.
+type HeldRecords = std::sync::Mutex<
+    std::collections::HashMap<
+        std::path::PathBuf,
+        std::collections::HashMap<String, std::sync::Arc<ChangeRecord>>,
+    >,
+>;
+
+fn held_table() -> &'static HeldRecords {
+    static TABLE: std::sync::OnceLock<HeldRecords> = std::sync::OnceLock::new();
+    TABLE.get_or_init(HeldRecords::default)
+}
+
+/// The records this process already read of `heads` in `git`'s repository. A record at a head
+/// never changes: the head's id names its tree, and the tree its `change.json`.
+fn held_records(
+    git: &Git,
+    heads: &[(String, u64, String)],
+) -> std::collections::HashMap<String, std::sync::Arc<ChangeRecord>> {
+    let table = held_table()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    table.get(git.dir()).map_or_else(Default::default, |kept| {
+        heads
+            .iter()
+            .filter_map(|(head, _, _)| Some((head.clone(), kept.get(head)?.clone())))
+            .collect()
+    })
+}
+
+/// Keeps `records` as the records of `git`'s repository, in place of those kept before: only
+/// the heads of the newest listing, so a long-lived process (an executor) stays bounded.
+fn keep_records(
+    git: &Git,
+    records: std::collections::HashMap<String, std::sync::Arc<ChangeRecord>>,
+) {
+    held_table()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(git.dir().to_path_buf(), records);
+}
+
 /// One chain as [`Chain::read_all`] found it.
 #[derive(Clone, Debug)]
 pub struct HeldChain {
@@ -714,6 +756,10 @@ impl<'a> Chain<'a> {
     /// the batch cannot give is read by [`Chain::read`] on its own, and a chain that cannot be
     /// read is left out, as a caller of [`Chain::read`] per chain would skip it.
     ///
+    /// G613 (a fleet finding, 2026-10-31: one `bay status` read and parsed all 3,052 records
+    /// five times, about 2 s): the batch reads only the heads this process has not read yet.
+    /// A record at a head never changes, as the head's id names its tree.
+    ///
     /// # Errors
     ///
     /// A git fault listing the chains or reading the batch.
@@ -733,21 +779,30 @@ impl<'a> Chain<'a> {
                 Some((head, committed, id))
             })
             .collect();
-        let names: Vec<String> = heads
+        let mut known = held_records(self.git, &heads);
+        let unread: Vec<&String> = heads
             .iter()
-            .map(|(head, _, _)| format!("{head}:{RECORD_FILE}"))
+            .map(|(head, _, _)| head)
+            .filter(|head| !known.contains_key(*head))
             .collect();
-        let texts = self.git.objects(&names)?;
-        Ok(heads
+        let names: Vec<String> = unread
+            .iter()
+            .map(|head| format!("{head}:{RECORD_FILE}"))
+            .collect();
+        for (head, text) in unread.into_iter().zip(self.git.objects(&names)?) {
+            if let Some(record) = text
+                .and_then(|text| String::from_utf8(text).ok())
+                .and_then(|text| parse_record(&text).ok())
+            {
+                known.insert(head.clone(), std::sync::Arc::new(record));
+            }
+        }
+        let held = heads
             .into_iter()
-            .zip(texts)
-            .filter_map(|((head, committed, id), text)| {
-                let parsed = text
-                    .and_then(|text| String::from_utf8(text).ok())
-                    .and_then(|text| parse_record(&text).ok());
+            .filter_map(|(head, committed, id)| {
                 // G563: a copy of another change's chain is left out, as [`Chain::read`] refuses it.
-                let (head, record) = match parsed {
-                    Some(record) if record.id == id => (head, record),
+                let (head, record) = match known.get(&head) {
+                    Some(record) if record.id == id => (head, ChangeRecord::clone(record)),
                     _ => self.read(&id).ok()?,
                 };
                 Some(HeldChain {
@@ -757,7 +812,9 @@ impl<'a> Chain<'a> {
                     record,
                 })
             })
-            .collect())
+            .collect();
+        keep_records(self.git, known);
+        Ok(held)
     }
 
     /// The chain's newest draft: what [`Chain::drafts`] lists first, read from the head state
