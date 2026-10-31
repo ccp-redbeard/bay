@@ -59,7 +59,9 @@ impl SessionId {
 /// before each shell command of the session), bay appends `BAY_SESSION` and `BAY_ACTOR` to it,
 /// so the session's own bay commands act as this session, and marks the link `bound` in the
 /// session's state. Without one the link is `unbound`: never guessed. An actor name with a
-/// control character is not written.
+/// control character is not written. `BAY_ACTOR` is written only when it came from the
+/// environment (G602): a `USER` or built-in default written there would read as named by the
+/// environment in every later command, and `require_actor` (G152) could never see it.
 fn bind_env(state_dir: &Path, session: &SessionId) {
     let Some(file) = std::env::var_os("CLAUDE_ENV_FILE").filter(|file| !file.is_empty()) else {
         return;
@@ -69,11 +71,10 @@ fn bind_env(state_dir: &Path, session: &SessionId) {
         return;
     }
     let quote = |value: &str| format!("'{}'", value.replace('\'', r"'\''"));
-    let text = format!(
-        "export BAY_SESSION={}\nexport BAY_ACTOR={}\n",
-        quote(session.as_str()),
-        quote(&actor)
-    );
+    let mut text = format!("export BAY_SESSION={}\n", quote(session.as_str()));
+    if crate::change::actor_source() == crate::change::ActorSource::Env {
+        let _ = writeln!(text, "export BAY_ACTOR={}", quote(&actor));
+    }
     let appended = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

@@ -376,8 +376,8 @@ fn a_file_name_that_is_not_utf8_does_not_stop_the_record() {
 #[test]
 fn a_session_start_with_an_env_file_binds_the_session() {
     // Ruling R2: where the product hands session-start a `CLAUDE_ENV_FILE`, bay writes
-    // `BAY_SESSION` and `BAY_ACTOR` into it, so the session's own bay commands act as this
-    // session; its record says the link is bound.
+    // `BAY_SESSION` into it, and `BAY_ACTOR` when the environment named one (G602), so the
+    // session's own bay commands act as this session; its record says the link is bound.
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
     test_box.seed_trunk(&repo, &[("src/a.rs", "fn a() {}\n")]);
@@ -391,7 +391,7 @@ fn a_session_start_with_an_env_file_binds_the_session() {
     );
     let text = std::fs::read_to_string(&env_file).unwrap();
     assert!(text.contains("export BAY_SESSION='s-env'\n"), "{text}");
-    assert!(text.contains("export BAY_ACTOR='"), "{text}");
+    assert!(!text.contains("BAY_ACTOR"), "{text}");
     let record = repo.join(".git/bay/sessions/s-env.jsonl");
     assert_eq!(last_line(&record)["actor_link"], "bound");
     let batch = fixture("08-PostToolBatch.json", "s-env", &view);
