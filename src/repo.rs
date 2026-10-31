@@ -11,6 +11,7 @@
 //! (remote `origin` unless `bay.remote` names another). A missing bootstrap, or no config at
 //! the trunk tip, is `CONFIG_MISSING`, never a silent default.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -788,15 +789,50 @@ impl Repo {
                 }
                 continue;
             }
-            for change in batch {
-                let fetched = format!("{}{change}", crate::names::FETCH);
-                if let Ok(remote) = git.run(&["rev-parse", "--verify", &fetched]) {
-                    let _ = git.run(&["update-ref", "-d", &fetched, &remote]);
+            self.settle_fetched(batch);
+        }
+        unread
+    }
+
+    /// Settles each of `changes` on the head [`Repo::remote_chains`] fetched for it, and
+    /// deletes the fetched refs. G611: the fetched heads and this store's chain refs are read
+    /// in one `cat-file` each and the fetched refs deleted in one transaction; a chain already
+    /// at its remote head is not touched (a fleet finding, 2026-10-31: three git processes a
+    /// change, about 2 s a status of 48 changes). A read that fails settles one by one.
+    fn settle_fetched(&self, changes: &[String]) {
+        let git = &self.git;
+        let fetched: Vec<String> = changes
+            .iter()
+            .map(|change| format!("{}{change}", crate::names::FETCH))
+            .collect();
+        let chains: Vec<String> = changes
+            .iter()
+            .map(|change| crate::change::change_ref(change))
+            .collect();
+        let (Ok(remotes), Ok(locals)) = (git.object_ids(&fetched), git.object_ids(&chains)) else {
+            for (change, fetched) in changes.iter().zip(&fetched) {
+                if let Ok(remote) = git.run(&["rev-parse", "--verify", fetched]) {
+                    let _ = git.run(&["update-ref", "-d", fetched, &remote]);
                     let _ = self.settle_chain(change, &remote);
                 }
             }
+            return;
+        };
+        let mut deletes = String::new();
+        for (((change, fetched), remote), local) in
+            changes.iter().zip(&fetched).zip(remotes).zip(locals)
+        {
+            let Some(remote) = remote else {
+                continue;
+            };
+            let _ = writeln!(deletes, "delete {fetched} {remote}");
+            if local.as_deref() != Some(remote.as_str()) {
+                let _ = self.settle_chain(change, &remote);
+            }
         }
-        unread
+        if !deletes.is_empty() {
+            let _ = git.run_with(&["update-ref", "--stdin"], &[], Some(deletes.as_bytes()));
+        }
     }
 
     /// Moves this store's chain ref of `change` to the remote's head `remote` as
