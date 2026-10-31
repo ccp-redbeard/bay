@@ -153,11 +153,12 @@ fn listed(repo: &Repo, chain: &Chain, named: Option<String>) -> Result<Vec<Strin
     Ok(ids)
 }
 
-/// How many changes a listing describes; the rest are named in `more_changes`.
+/// How many changes, and how many views, a listing describes; the rest are named in
+/// `more_changes` and `more_leftovers`.
 const LISTED: usize = 20;
 
-/// The live changes a listing names but does not describe: how many, the first hundred ids, and
-/// how to read one. `null` when none is left out.
+/// The changes or views a listing names but does not describe: how many, the first LISTED ids,
+/// and how to read one. `null` when none is left out.
 fn more_changes(more: &[String]) -> Value {
     if more.is_empty() {
         return Value::Null;
@@ -316,7 +317,7 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
     // A read of one change scans its own view only, never every view on the machine (a fleet
     // finding, 2026-10-26: 43 views cost a named status about 26 s).
     let named = change.map(str::to_owned).or_else(|| repo.view_change(dir));
-    let leftovers = leftovers(&repo, &trunk, named.as_deref(), me.as_deref())?;
+    let (leftovers, more_leftovers) = leftovers(&repo, &trunk, named.as_deref(), me.as_deref())?;
     let quarantines = quarantines(&repo, &trunk);
     let flakes = flake_rows(&repo, &trunk, &read);
     let (red_rows_now, red_pending) = red_rows(&repo, &trunk);
@@ -329,6 +330,7 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
         "flakes": flakes,
         "flow": flow,
         "leftovers": leftovers,
+        "more_leftovers": more_changes(&more_leftovers),
         "quarantines": quarantines,
         "red": red_rows_now,
         "red_pending": red_pending,
@@ -599,14 +601,15 @@ pub(crate) fn open_quarantines(git: &crate::git::Git, at: &str) -> Result<Vec<Va
         .collect())
 }
 
-/// Every view this machine still holds, with its change state, its age and whether it has
-/// uncheckpointed edits (G41). No pull-request state, no chat activity.
+/// The reader's own views on this machine, each with its change state, its age and whether it
+/// has uncheckpointed edits (G41), and the ids of the views a listing names without checking
+/// them. No pull-request state, no chat activity.
 fn leftovers(
     repo: &Repo,
     trunk: &str,
     only: Option<&str>,
     me: Option<&str>,
-) -> Result<Vec<Value>, String> {
+) -> Result<(Vec<Value>, Vec<String>), String> {
     // W5: every chain in one batch (G200b), never one read per view.
     let chain = Chain::new(&repo.git);
     let mut records: std::collections::BTreeMap<String, ChangeRecord> = chain
@@ -616,6 +619,7 @@ fn leftovers(
         .map(|held| (held.id, held.record))
         .collect();
     let mut out = Vec::new();
+    let mut more = Vec::new();
     for id in view::all(repo)
         .into_iter()
         .filter(|id| only.is_none_or(|only| only == id))
@@ -623,11 +627,16 @@ fn leftovers(
         let Some(record) = records.remove(&id) else {
             continue;
         };
-        // A listing reports the views of ended changes and of the reader's own live ones, at
-        // most LISTED of them: checking every view on a shared box cost a status minutes (a
-        // fleet finding, 2026-10-26: 256 views).
-        let listed = ended(record.state) || me.is_none_or(|me| me == record.actor.name);
-        if only.is_none() && (!listed || out.len() >= LISTED) {
+        // A listing checks the reader's own views, at most LISTED of them: checking every view
+        // on a shared box cost a status minutes (a fleet finding, 2026-10-26: 256 views). The
+        // views of another actor's ended changes are named, never checked (G609, a fleet
+        // finding, 2026-10-31: 20 such views cost each status of 34 agents about 12 s); `bay
+        // status <change>` checks one.
+        let mine = me.is_none_or(|me| me == record.actor.name);
+        if only.is_none() && (!mine || out.len() >= LISTED) {
+            if mine || ended(record.state) {
+                more.push(id);
+            }
             continue;
         }
         let landed = !scan(&repo.git, &record.base_first, trunk, &id)?
@@ -672,7 +681,7 @@ fn leftovers(
         }));
     }
     out.extend(stale_inflight(repo, &chain)?);
-    Ok(out)
+    Ok((out, more))
 }
 
 /// The revision a view is measured against once its change ended (§ 9a): the change's last
