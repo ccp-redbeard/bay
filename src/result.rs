@@ -1547,6 +1547,7 @@ impl BayResult {
                 .or_else(|| change_say(self))
                 .or_else(|| main_say(self))
                 .or_else(|| talk_say(self))
+                .or_else(|| update_say(self))
                 .unwrap_or_else(|| ok_say(self).to_owned()),
             Decision::Blocked => {
                 "Not done yet; read the detail for what is needed, then try again.".to_owned()
@@ -1766,6 +1767,37 @@ fn change_say(result: &BayResult) -> Option<String> {
         });
     }
     Reason::from_code(outcome).map(|reason| format!("{id}: {}", reason.say(None)))
+}
+
+/// G601: the sentence of a `bay update` result (`crate::update`'s plan detail): the version this
+/// computer ran and the one it runs now or may install, and what the box's pin does. A pin is the
+/// lowest version the box runs, so one below the target holds nothing back.
+fn update_say(result: &BayResult) -> Option<String> {
+    let detail = result.detail.as_ref()?;
+    let installed = detail.get("installed")?.as_str()?;
+    let target = detail.get("target")?.as_str()?;
+    let updated = detail.get("updated")?.as_bool()?;
+    let pin = match detail.get("pinned")?.as_str() {
+        None => String::new(),
+        Some(pin) if pin == target => {
+            format!(" {pin} is the lowest version set for this computer.")
+        }
+        Some(pin) => {
+            format!(" The lowest version set for this computer, {pin}, holds nothing back.")
+        }
+    };
+    let next = detail
+        .get("newest")
+        .and_then(Value::as_str)
+        .map(|newest| format!(" Run bay update again to reach {newest}."))
+        .unwrap_or_default();
+    Some(if updated {
+        format!("Updated bay from {installed} to {target}.{next}{pin}")
+    } else if detail.get("due") == Some(&Value::Bool(true)) {
+        format!("bay {target} is ready to install; this computer runs {installed}.{pin}")
+    } else {
+        format!("This computer runs bay {installed}; there is nothing newer to install.{pin}")
+    })
 }
 
 /// T12: the sentence of a `bay talk` result (its `detail.talk`, or a round's `detail.round`),
@@ -2016,6 +2048,34 @@ mod tests {
         let refused = read(json!({"change": "abcd1234", "state": "ready",
             "operation": {"lease": null, "outcome": Reason::CheckFailed.code()}}));
         assert!(!refused.contains("nothing else is needed"), "{refused}");
+    }
+
+    /// G601: `bay update` names the version it replaced and the one it installed, and says a pin
+    /// below the target holds nothing back, never "nothing else is needed".
+    #[test]
+    fn an_update_names_both_versions_and_what_its_pin_does() {
+        let say = |detail: serde_json::Value| BayResult::ok(detail).say();
+        let replaced = json!({"installed": "0.6.16", "target": "0.6.17", "pinned": null,
+            "updated": true});
+        assert_eq!(say(replaced), "Updated bay from 0.6.16 to 0.6.17.");
+        let newest = json!({"installed": "0.6.17", "target": "0.6.17", "pinned": "0.5.35",
+            "updated": false, "due": false});
+        assert_eq!(
+            say(newest),
+            "This computer runs bay 0.6.17; there is nothing newer to install. The lowest version set for this computer, 0.5.35, holds nothing back."
+        );
+        let due = json!({"installed": "0.6.16", "target": "0.6.17", "pinned": "0.6.17",
+            "updated": false, "due": true});
+        assert_eq!(
+            say(due),
+            "bay 0.6.17 is ready to install; this computer runs 0.6.16. 0.6.17 is the lowest version set for this computer."
+        );
+        let stepped = json!({"installed": "0.6.10", "target": "0.6.12", "pinned": null,
+            "updated": true, "newest": "0.6.17", "stepped": true});
+        assert_eq!(
+            say(stepped),
+            "Updated bay from 0.6.10 to 0.6.12. Run bay update again to reach 0.6.17."
+        );
     }
 
     /// 0.6.3: a status read while main is red, or while a fix's run has not answered, says so,

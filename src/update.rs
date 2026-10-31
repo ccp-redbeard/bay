@@ -465,8 +465,10 @@ fn unsigned_for_us(refusal: &Refusal) -> bool {
 }
 
 /// `--version` wins, then the newest release that has a build for this platform, or the pin
-/// when no release is as new as it. A release list that cannot be read leaves a pinned box on
-/// its pin. Every release is a candidate: whether GitHub marks it a pre-release plays no part.
+/// when no release is as new as it. A release list that cannot be read moves a pinned box up
+/// to its pin, never down to it: a pin older than this bay is never the target, so only
+/// `--version` moves a box back (G601). Every release is a candidate: whether GitHub marks it a
+/// pre-release plays no part.
 fn resolve(source: &Source, pin: Option<String>, version: Option<String>) -> Result<Plan, Refusal> {
     let unavailable = |why: String| {
         Box::new(
@@ -475,12 +477,14 @@ fn resolve(source: &Source, pin: Option<String>, version: Option<String>) -> Res
         )
     };
     let on_pin = |pin: &Option<String>| {
-        pin.clone().map(|target| Plan {
-            target,
-            pin: pin.clone(),
-            newest: None,
-            steps: Vec::new(),
-        })
+        pin.clone()
+            .filter(|floor| compare(floor, BAY) != Ordering::Less)
+            .map(|target| Plan {
+                target,
+                pin: pin.clone(),
+                newest: None,
+                steps: Vec::new(),
+            })
     };
     if let Some(target) = version {
         return Ok(Plan {
@@ -497,8 +501,9 @@ fn resolve(source: &Source, pin: Option<String>, version: Option<String>) -> Res
     };
     if let Some(floor) = &pin
         && compare(floor, &newest) == Ordering::Greater
+        && let Some(plan) = on_pin(&pin)
     {
-        return Ok(on_pin(&pin).expect("a pin"));
+        return Ok(plan);
     }
     Ok(Plan {
         target: newest,
