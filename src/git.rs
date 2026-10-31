@@ -504,12 +504,13 @@ impl Git {
             run_bounded_for(cmd, &args_display, input, timeout)
         };
         let output = run();
-        // G617: a push, landed or not, may have changed what the remote holds, so no sweep that
-        // began before it ends serves a status read.
+        // G617, G618: a push, landed or not, may have changed what the remote holds, so no sweep
+        // that began before it ends serves a status read, unless the store holds what it sent.
         if args.first() == Some(&"push")
             && let Some(common) = self.store_dir()
         {
-            crate::sweep::pushed(&common, crate::live::unix_now());
+            let ok = output.as_ref().is_ok_and(|output| output.status.success());
+            crate::sweep::pushed(&common, crate::live::unix_now(), &args[1..], ok);
         }
         let mut output = output?;
         if self.lazy_fetch {

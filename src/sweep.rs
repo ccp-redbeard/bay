@@ -13,10 +13,18 @@
 //! the store as that sweep left it, and names that sweep's time as its `fetched_at`. A push from
 //! this store ends the window of every sweep that began before the push ended, so the read after
 //! a write asks the remote again.
+//!
+//! G618 (a fleet finding, 2026-10-31: in a shared store most listings push a chain that local
+//! work left ahead of the remote, so the push ended the window of the listing's own sweep, and 3
+//! of 4 reads after one asked the remote again): a push ends no window when this store holds what
+//! it sent. After it the remote holds this store's value of each pushed ref, so the store is as
+//! fresh as the sweep left it, and the write reads back. A push that failed, sent what bay cannot
+//! name, or sent a ref the store no longer holds at that value, still ends the window.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 
@@ -122,28 +130,130 @@ fn record(common: &Path) -> PathBuf {
     common.join("bay").join("swept.json")
 }
 
-/// When the store last pushed, in Unix seconds ([`pushed`]).
-fn push_mark(common: &Path) -> PathBuf {
-    common.join("bay").join("swept-pushed")
+/// The marks of the store's pushes ([`pushed`]), one file each, named `<unix>-<pid>-<n>`.
+fn push_marks(common: &Path) -> PathBuf {
+    common.join("bay").join("swept-pushes")
 }
 
-/// The time of the last listing's sweep of `remote` by `refspecs` in this store, while its
-/// window is open at `now`; `None` when no such sweep is that recent, or the store pushed after
-/// it began.
+/// The Unix time a push mark's file `name` starts with. A file of a mark being written has a
+/// `.` in its name.
+fn mark_time(name: &std::ffi::OsStr) -> Option<u64> {
+    name.to_str()?.split(['-', '.']).next()?.parse().ok()
+}
+
+/// The time of the last listing's sweep of `remote` by `refspecs` in the store of `git`, whose
+/// common directory is `common`, while its window is open at `now`; `None` when no such sweep is
+/// that recent, or the store pushed after it began what it does not hold ([`holds_pushed`]).
 #[must_use]
-pub fn window(common: &Path, remote: &str, refspecs: &[String], now: u64) -> Option<String> {
+pub fn window(
+    git: &Git,
+    common: &Path,
+    remote: &str,
+    refspecs: &[String],
+    now: u64,
+) -> Option<String> {
     let text = std::fs::read_to_string(record(common)).ok()?;
     let held: Value = serde_json::from_str(&text).ok()?;
     let unix = held["unix"].as_u64()?;
-    let pushed = std::fs::read_to_string(push_mark(common))
-        .ok()
-        .and_then(|text| text.trim().parse::<u64>().ok());
     let open = held["remote"] == remote
         && held["refspecs"] == json!(refspecs)
-        && pushed.is_none_or(|pushed| pushed < unix)
         && unix <= now
-        && now < unix.saturating_add(window_s());
+        && now < unix.saturating_add(window_s())
+        && holds_pushed(git, common, refspecs, unix);
     open.then(|| held["at"].as_str().map(str::to_owned))?
+}
+
+/// Whether the store of `git` holds what each of its pushes since `unix` sent (G618): each ref a
+/// push sent is, as the ref the sweep's `refspecs` map it to, at the object the push sent. A ref
+/// no refspec maps is one the read does not judge. A push that failed, or whose mark cannot be
+/// read, holds nothing.
+fn holds_pushed(git: &Git, common: &Path, refspecs: &[String], unix: u64) -> bool {
+    let entries = match std::fs::read_dir(push_marks(common)) {
+        Ok(entries) => entries,
+        Err(error) => return error.kind() == std::io::ErrorKind::NotFound,
+    };
+    // Each local ref, and the object a push sent to the ref it copies.
+    let mut wanted: Vec<(String, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy().contains('.') || mark_time(&name).is_none_or(|at| at < unix) {
+            continue;
+        }
+        let mark = std::fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        let Some(sent) = mark.as_ref().and_then(|mark| mark["refs"].as_array()) else {
+            return false;
+        };
+        for pair in sent {
+            let (Some(source), Some(target)) = (pair[0].as_str(), pair[1].as_str()) else {
+                return false;
+            };
+            let Some(local) = local_of(refspecs, target) else {
+                continue;
+            };
+            if is_oid(source) {
+                wanted.push((local, source.to_owned()));
+            } else if source != target || local != target {
+                return false;
+            }
+        }
+    }
+    if wanted.is_empty() {
+        return true;
+    }
+    let mut args = vec!["for-each-ref", "--format=%(objectname) %(refname)"];
+    args.extend(wanted.iter().map(|(local, _)| local.as_str()));
+    let Ok(listed) = git.run(&args) else {
+        return false;
+    };
+    let held: BTreeMap<&str, &str> = listed
+        .lines()
+        .filter_map(|line| line.split_once(' ').map(|(oid, name)| (name, oid)))
+        .collect();
+    wanted
+        .iter()
+        .all(|(local, oid)| held.get(local.as_str()) == Some(&oid.as_str()))
+}
+
+/// The local ref a refspec of `refspecs` copies the remote's ref `name` to, if one does.
+fn local_of(refspecs: &[String], name: &str) -> Option<String> {
+    refspecs.iter().find_map(|spec| {
+        let (remote, local) = spec.trim_start_matches('+').split_once(':')?;
+        match (remote.strip_suffix('*'), local.strip_suffix('*')) {
+            (Some(remote), Some(local)) => name
+                .strip_prefix(remote)
+                .map(|rest| format!("{local}{rest}")),
+            (None, None) => (name == remote).then(|| local.to_owned()),
+            _ => None,
+        }
+    })
+}
+
+/// Whether `text` is a full object id.
+fn is_oid(text: &str) -> bool {
+    matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// The refs `git push <args>` sent, as pairs of the source and the remote's ref; `None` when the
+/// push may have changed a ref no pair names: it names no refspec, deletes, or takes an option
+/// bay does not pass.
+fn pushed_refs(args: &[&str]) -> Option<Vec<(String, String)>> {
+    let mut words = args.iter().filter(|word| {
+        !matches!(**word, "-q" | "--atomic") && !word.starts_with("--force-with-lease=")
+    });
+    let remote = words.next()?;
+    if remote.starts_with('-') {
+        return None;
+    }
+    let sent = words
+        .map(|spec| {
+            let (source, target) = spec.strip_prefix('+').unwrap_or(spec).split_once(':')?;
+            (!source.is_empty() && target.starts_with("refs/"))
+                .then(|| (source.to_owned(), target.to_owned()))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!sent.is_empty()).then_some(sent)
 }
 
 /// Records that a listing's sweep of `remote` by `refspecs` settled this store, so the reads in
@@ -154,11 +264,27 @@ pub fn remember(common: &Path, remote: &str, refspecs: &[String], swept: &Swept)
     replace(&path, &held.to_string());
 }
 
-/// Records that the store whose common directory is `common` pushed at `now`: a push may have
-/// changed what the remote holds, so no sweep that began at or before it serves a read. A push
-/// that ends inside the second a sweep began closes that sweep's window too.
-pub fn pushed(common: &Path, now: u64) {
-    replace(&push_mark(common), &now.to_string());
+/// Records that the store whose common directory is `common` ran `git push <args>` at `now`, `ok`
+/// when it succeeded: a push may have changed what the remote holds, so it ends the window of
+/// every sweep that began at or before it, unless the store holds what it sent
+/// ([`holds_pushed`]). A push that ends inside the second a sweep began counts for that sweep
+/// too. The marks older than any window are removed. Best effort.
+pub fn pushed(common: &Path, now: u64, args: &[&str], ok: bool) {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = push_marks(common);
+    let past = now.saturating_sub(window_s().max(BAY_SWEPT_S));
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        if mark_time(&entry.file_name()).is_some_and(|at| at < past) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let sent = if ok { pushed_refs(args) } else { None };
+    let name = format!(
+        "{now}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    );
+    replace(&dir.join(name), &json!({ "refs": sent }).to_string());
 }
 
 /// Writes `text` at `path` whole, through a file of this process beside it. Best effort.
@@ -227,6 +353,54 @@ pub fn apply(git: &Git, moves: &[Update]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_push_names_the_refs_it_sent_or_none() {
+        let a = "a".repeat(40);
+        let chain = "refs/bay/changes/c1";
+        let lease = format!("--force-with-lease={chain}:");
+        let sent = format!("{chain}:{chain}");
+        let request = format!("+{a}:refs/bay/requests/c1");
+        assert_eq!(
+            pushed_refs(&["-q", "--atomic", &lease, "origin", &sent, &request]),
+            Some(vec![
+                (chain.to_owned(), chain.to_owned()),
+                (a.clone(), "refs/bay/requests/c1".to_owned())
+            ])
+        );
+        assert_eq!(
+            pushed_refs(&["-q", "--delete", "origin", "refs/heads/b"]),
+            None
+        );
+        assert_eq!(pushed_refs(&["-q", "origin", ":refs/heads/b"]), None);
+        assert_eq!(pushed_refs(&["-q", "origin"]), None);
+        assert_eq!(pushed_refs(&["-q", "origin", "HEAD"]), None);
+    }
+
+    #[test]
+    fn a_refspec_maps_a_remote_ref_to_its_local_copy() {
+        let refspecs = [
+            "+refs/heads/main:refs/remotes/origin/main".to_owned(),
+            "+refs/bay/changes/*:refs/bay/changes/*".to_owned(),
+            "+refs/bay/live/*:refs/bay/fleet/*".to_owned(),
+        ];
+        let local = |name| local_of(&refspecs, name);
+        assert_eq!(
+            local("refs/heads/main").as_deref(),
+            Some("refs/remotes/origin/main")
+        );
+        assert_eq!(local("refs/heads/mainline"), None);
+        assert_eq!(
+            local("refs/bay/changes/c1").as_deref(),
+            Some("refs/bay/changes/c1")
+        );
+        assert_eq!(
+            local("refs/bay/live/a").as_deref(),
+            Some("refs/bay/fleet/a")
+        );
+        assert_eq!(local("refs/bay/intents/x"), None);
+        assert!(is_oid(&"f".repeat(64)) && !is_oid("refs/heads/main"));
+    }
 
     #[test]
     fn a_porcelain_listing_names_each_move_with_its_flag() {

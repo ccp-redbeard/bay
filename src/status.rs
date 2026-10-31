@@ -505,8 +505,13 @@ fn fetch_swept(
     );
     let named = change.map(str::to_owned).or_else(|| first.view_change(dir));
     let now = crate::live::unix_now();
-    if let Some(at) = sweep::window(&first.common_dir, first.remote(), &refspecs, now)
-        && let Some(refreshed) = windowed(&first, named.clone(), held.clone(), at)
+    if let Some(at) = sweep::window(
+        &first.git,
+        &first.common_dir,
+        first.remote(),
+        &refspecs,
+        now,
+    ) && let Some(refreshed) = windowed(&first, named.clone(), held.clone(), at)
     {
         return Some(Ok((first, refreshed)));
     }

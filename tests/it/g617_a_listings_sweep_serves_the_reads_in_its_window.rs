@@ -1,16 +1,15 @@
 //! G617 (a fleet finding, 2026-10-31: after G615 and G616 the one sweep of a `bay status` still
 //! took 3.2 to 4.0 s of each read on a hosted remote, however few refs had moved). A listing's
 //! sweep serves every status read of its store for a short window after it: such a read asks the
-//! remote nothing and names that sweep's time as its `fetched_at`. A push from the store ends the
-//! window, a read that names one change opens none, and a read of a change the store does not hold
-//! still asks the remote. Read from the trace a test build writes when `BAY_TEST_GIT_TRACE` names
-//! a file (G171); `BAY_TEST_SWEPT_S` sets the window in a test build.
+//! remote nothing and names that sweep's time as its `fetched_at`. A read that names one change
+//! opens no window, and a read of a change the store does not hold still asks the remote. How a
+//! push ends the window is G618. Read from the trace a test build writes when `BAY_TEST_GIT_TRACE`
+//! names a file (G171); `BAY_TEST_SWEPT_S` sets the window in a test build.
 //!
 //! Guards to mutate: in `src/status.rs`, never serve a read from the window, and the second read
 //! asks the remote; name the time of the read as a windowed read's `fetched_at`, and it is not
 //! the sweep's; remember a named read's sweep, and the listing after it is served the old trunk;
-//! serve a named read of a chain the store lacks, and the change is not shown. In `src/git.rs`,
-//! mark no push, and the read after a push is served the old trunk.
+//! serve a named read of a chain the store lacks, and the change is not shown.
 
 use crate::support;
 
@@ -20,11 +19,11 @@ use serde_json::Value;
 use support::{TestBox, result_json, unchecked_files};
 
 /// A window no test outlives.
-const OPEN: &str = "600";
+pub(crate) const OPEN: &str = "600";
 
 /// A repository with one live change, and a reader clone that holds its chain: the box, the
 /// first clone, the remote, the reader and the change id.
-fn store() -> (TestBox, PathBuf, PathBuf, PathBuf, String) {
+pub(crate) fn store() -> (TestBox, PathBuf, PathBuf, PathBuf, String) {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
     let remote = test_box.path().join("repo-remote.git");
@@ -45,7 +44,7 @@ fn store() -> (TestBox, PathBuf, PathBuf, PathBuf, String) {
 
 /// `bay status [<id>]` in `dir` with a window of `window` seconds: the result, and how many of
 /// bay's own git spawns asked the remote.
-fn status(
+pub(crate) fn status(
     test_box: &TestBox,
     dir: &Path,
     id: Option<&str>,
@@ -76,7 +75,7 @@ fn status(
 }
 
 /// Moves the remote's trunk one commit forward, as another clone's landing would: the new tip.
-fn move_trunk(test_box: &TestBox, remote: &Path) -> String {
+pub(crate) fn move_trunk(test_box: &TestBox, remote: &Path) -> String {
     let main = test_box.git_bare(remote, &["rev-parse", "refs/heads/main"]);
     let next = test_box.git_bare(
         remote,
@@ -99,7 +98,7 @@ fn move_trunk(test_box: &TestBox, remote: &Path) -> String {
 
 /// Whether `result` names the change `id`: as a row, or among the changes of other actors that a
 /// listing only counts.
-fn shows(result: &Value, id: &str) -> bool {
+pub(crate) fn shows(result: &Value, id: &str) -> bool {
     let row = result["detail"]["changes"]
         .as_array()
         .is_some_and(|rows| rows.iter().any(|row| row["change"] == id));
@@ -133,23 +132,6 @@ fn a_read_inside_the_window_asks_the_remote_nothing() {
     let (asked, swept) = status(&test_box, &reader, None, "0", "closed");
     assert_eq!(asked, 1, "the read past the window did not sweep");
     assert_eq!(swept["detail"]["main"], next.as_str(), "{swept}");
-}
-
-#[test]
-fn a_push_from_the_store_ends_the_window() {
-    let (test_box, repo, remote, _, _) = store();
-    let (asked, first) = status(&test_box, &repo, None, OPEN, "first");
-    assert_eq!(asked, 1, "the listing did not sweep: {first}");
-    let (pushed, _) = test_box.start_and_edit(&repo);
-    let next = move_trunk(&test_box, &remote);
-
-    let (asked, after) = status(&test_box, &repo, None, OPEN, "after");
-    assert_eq!(
-        asked, 1,
-        "the read after a push was served by the sweep before it"
-    );
-    assert_eq!(after["detail"]["main"], next.as_str(), "{after}");
-    assert!(shows(&after, &pushed), "{after}");
 }
 
 #[test]
