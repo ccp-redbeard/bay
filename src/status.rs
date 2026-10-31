@@ -88,16 +88,12 @@ pub fn cached(
     Ok(result)
 }
 
-/// Fetches the remote trunk and, after it, the fleet refs; returns trunk's tip and the time of
-/// the trunk fetch, taken before the fleet fetch so it never overstates trunk's freshness.
-/// Offline, the tracking ref is the trunk and there is no fetch time.
+/// Fetches the remote trunk; returns trunk's tip and the time of the trunk fetch, taken before
+/// any other fetch so it never overstates trunk's freshness. Offline, the tracking ref is the
+/// trunk and there is no fetch time.
 fn synchronize(repo: &Repo) -> Result<(String, Option<String>), String> {
     match repo.fetch_trunk() {
-        Ok(trunk) => {
-            let fetched_at = now_rfc3339();
-            crate::fleet::fetch(repo);
-            Ok((trunk, Some(fetched_at)))
-        }
+        Ok(trunk) => Ok((trunk, Some(now_rfc3339()))),
         Err(_) => Ok((
             repo.git
                 .run(&["rev-parse", "--verify", &repo.trunk_tracking_ref()])
@@ -132,7 +128,6 @@ fn refresh_chains(repo: &Repo, chain: &Chain, ids: &[String]) -> Result<(), Stri
 /// change (merged, abandoned, superseded, no effect) never comes back, so its record here is
 /// final, and `bay status <change>` still reads it whole. A listing refreshes in one fetch.
 fn listed(repo: &Repo, chain: &Chain, named: Option<String>) -> Result<Vec<String>, String> {
-    crate::log::fetch(repo);
     if let Some(id) = named {
         let ids = vec![id];
         refresh_chains(repo, chain, &ids)?;
@@ -213,29 +208,76 @@ fn held_records(chain: &Chain, ids: &[String], named: bool) -> Result<Vec<Change
         .collect()
 }
 
+/// What a status read brought from the remote before it reads anything.
+struct Refreshed {
+    trunk: String,
+    fetched_at: Option<String>,
+    /// The changes the read names, their chains refreshed ([`listed`]).
+    ids: Vec<String>,
+    /// Whether the remote answered the read of the promotion targets.
+    targets: bool,
+}
+
+/// Fetches what a status read judges: the trunk first, then at once each set of refs that no
+/// other of these fetches writes (a fleet finding, 2026-10-31: nine fetches one after another
+/// took 16.5 s of a 42 s status). The receipts' sync and the chains it may push stay in one
+/// thread, in that order. Offline, only the log and the chains are tried, as before.
+fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
+    let (trunk, fetched_at) = synchronize(repo)?;
+    let online = fetched_at.is_some();
+    let (ids, targets) = std::thread::scope(|scope| {
+        let chains = scope.spawn(move || {
+            let _ = receipts::sync(repo);
+            listed(repo, &Chain::new(&repo.git), named)
+        });
+        let targets = scope.spawn(move || online && crate::target::fetch(repo));
+        scope.spawn(|| crate::log::fetch(repo));
+        if online {
+            scope.spawn(|| crate::fleet::fetch(repo));
+            // NEW-4: the lane refs an unattributed landing is judged against, as the remote
+            // holds them.
+            scope.spawn(|| crate::lane::fetch(repo));
+            // Red, flakes, post checks and targets judge the evidence notes: fetched once here.
+            scope.spawn(|| repo.fetch_evidence_once(&crate::signing::Keys::load(&repo.git)));
+        }
+        (
+            chains
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            targets
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+        )
+    });
+    Ok(Refreshed {
+        trunk,
+        fetched_at,
+        ids: ids?,
+        targets,
+    })
+}
+
 fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
     let repo = match Repo::open_fetched(dir) {
         Ok(repo) => repo,
         Err(error) => return Ok(error.into_result()),
     };
-    let _ = receipts::sync(&repo);
+    let Refreshed {
+        trunk,
+        fetched_at,
+        ids,
+        targets: targets_fetched,
+    } = fetch_all(
+        &repo,
+        change.map(str::to_owned).or_else(|| repo.view_change(dir)),
+    )?;
     let pending = receipts::pending(&repo);
-    let (trunk, fetched_at) = synchronize(&repo)?;
-    // NEW-4: the lane refs an unattributed landing is judged against, as the remote holds them.
-    if fetched_at.is_some() {
-        crate::lane::fetch(&repo);
-    }
     // § 11c: a fetching command on the recipient's machine accepts and acks its talks.
     let talk_accept = fetched_at
         .is_some()
         .then(|| crate::talk::poll::command(&repo, crate::live::unix_now()))
         .flatten();
     let chain = Chain::new(&repo.git);
-    let ids = listed(
-        &repo,
-        &chain,
-        change.map(str::to_owned).or_else(|| repo.view_change(dir)),
-    )?;
     // The runtime adapter is asked only for a change this read names: a listing of every
     // change stays bounded however many have landed.
     let named = change.is_some() || repo.view_change(dir).is_some();
@@ -271,11 +313,6 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
             .collect();
         changes.push(describe(&repo, record, &trunk, &unsynced, &read)?);
     }
-    // Red, flakes and post checks judge the evidence notes: fetched once here, never left to a
-    // landed change's row (the listing names live changes only, the 0.5.3 status patch).
-    if fetched_at.is_some() {
-        repo.fetch_evidence_once(&crate::signing::Keys::load(&repo.git));
-    }
     // A read of one change scans its own view only, never every view on the machine (a fleet
     // finding, 2026-10-26: 43 views cost a named status about 26 s).
     let named = change.map(str::to_owned).or_else(|| repo.view_change(dir));
@@ -283,7 +320,7 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
     let quarantines = quarantines(&repo, &trunk);
     let flakes = flake_rows(&repo, &trunk, &read);
     let (red_rows_now, red_pending) = red_rows(&repo, &trunk);
-    let targets = target_rows(&repo, &trunk, fetched_at.is_some(), &read);
+    let targets = target_rows(&repo, &trunk, targets_fetched, &read);
     // G309: the flow of work, derived on read from the chains this repository holds.
     let flow = crate::flow::flow(&repo, &trunk).unwrap_or_else(|why| json!({"unread": why}));
     let mut result = BayResult::ok(json!({
@@ -364,23 +401,13 @@ fn unattributed_rows(repo: &Repo, trunk: &str) -> Value {
     crate::unattributed::scan(&repo.git, trunk).unwrap_or_else(|why| json!({"unread": why}))
 }
 
-/// NEW-5: one row per promotion target (`crate::target::rows`), after a fetch of the remote's
-/// target refs and, when a target requires checks, of the other producers' evidence. Offline,
-/// the rows are read from the copies of the last fetch, and say so. A judgement bay cannot make
-/// says why under `unread`, never reads as promotable.
+/// NEW-5: one row per promotion target (`crate::target::rows`), read after [`fetch_all`]
+/// fetched the remote's target refs and the other producers' evidence (`fetched`: the remote
+/// answered). Offline, the rows are read from the copies of the last fetch, and say so. A
+/// judgement bay cannot make says why under `unread`, never reads as promotable.
 fn target_rows(repo: &Repo, trunk: &str, fetched: bool, read: &Read) -> Value {
     if repo.config.targets.is_empty() {
         return json!([]);
-    }
-    let fetched = fetched && crate::target::fetch(repo);
-    if fetched
-        && repo
-            .config
-            .targets
-            .iter()
-            .any(|target| !target.requires.is_empty())
-    {
-        repo.fetch_evidence_once(&crate::signing::Keys::load(&repo.git));
     }
     // An unreadable registry never reads as none: evidence would then count unsigned.
     let current;
