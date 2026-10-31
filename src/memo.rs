@@ -6,11 +6,15 @@
 //! by a ref name. A caller resolves a ref each time it reads one, so a moved ref is a new key and
 //! a kept load can never be stale. A revision that is not [`fixed`] is loaded each time, and a
 //! load its caller says may differ on a retry (a git fault) is never kept.
+//!
+//! One load of a key runs at a time: a caller that finds the same key loading waits for that
+//! load and takes what it kept (G614: since G612 a status runs its fetches' legs at once, and two
+//! legs read the registry at one commit).
 
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::git::Git;
 
@@ -21,10 +25,17 @@ const CAPACITY: usize = 512;
 /// The load's kind, the repository's git directory, and the fixed revision.
 type Key = (&'static str, PathBuf, String);
 type Table = Mutex<HashMap<Key, Box<dyn Any + Send>>>;
+/// Each key's turn: held while that key loads.
+type Turns = Mutex<HashMap<Key, Arc<Mutex<()>>>>;
 
 fn table() -> &'static Table {
     static TABLE: OnceLock<Table> = OnceLock::new();
     TABLE.get_or_init(Table::default)
+}
+
+fn turns() -> &'static Turns {
+    static TURNS: OnceLock<Turns> = OnceLock::new();
+    TURNS.get_or_init(Turns::default)
 }
 
 /// Whether `rev` names one object forever: a full object id (40 or 64 lowercase hex digits),
@@ -58,10 +69,28 @@ pub fn at<T: Clone + Send + 'static>(
     }
     let key = (kind, git.dir().to_path_buf(), rev.to_owned());
     let lock = || table().lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(kept) = lock().get(&key).and_then(|value| value.downcast_ref::<T>()) {
-        return kept.clone();
+    let kept = || {
+        lock()
+            .get(&key)
+            .and_then(|value| value.downcast_ref::<T>())
+            .cloned()
+    };
+    if let Some(kept) = kept() {
+        return kept;
     }
-    // The lock is not held while `load` runs git: a slow load never stalls another thread.
+    // The table's lock is not held while `load` runs git, only this key's turn: a slow load
+    // stalls no thread that loads another key, and a thread that loads this key waits for it.
+    let turn = {
+        let mut turns = turns().lock().unwrap_or_else(PoisonError::into_inner);
+        if turns.len() >= CAPACITY {
+            turns.clear();
+        }
+        Arc::clone(turns.entry(key.clone()).or_default())
+    };
+    let _turn = turn.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(kept) = kept() {
+        return kept;
+    }
     let value = load();
     if keep(&value) {
         let mut table = lock();
@@ -75,7 +104,51 @@ pub fn at<T: Clone + Send + 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::fixed;
+    use super::{at, fixed};
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use crate::git::Git;
+
+    #[test]
+    fn a_caller_that_finds_its_key_loading_takes_that_load() {
+        let git = Git::new("/no-such-repository/g614");
+        let rev = "0123456789abcdef0123456789abcdef01234567";
+        let loads = AtomicUsize::new(0);
+        let (started, loading) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                at(
+                    "g614",
+                    &git,
+                    rev,
+                    |_: &u32| true,
+                    || {
+                        loads.fetch_add(1, Ordering::SeqCst);
+                        started.send(()).unwrap();
+                        std::thread::sleep(Duration::from_millis(300));
+                        7
+                    },
+                )
+            });
+            loading.recv().unwrap();
+            let second = at(
+                "g614",
+                &git,
+                rev,
+                |_: &u32| true,
+                || {
+                    loads.fetch_add(1, Ordering::SeqCst);
+                    8
+                },
+            );
+            assert_eq!(first.join().unwrap(), 7);
+            assert_eq!(second, 7, "the second caller loaded the key again");
+        });
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn only_a_full_object_id_and_its_parent_steps_are_fixed() {
