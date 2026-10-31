@@ -217,16 +217,23 @@ struct Refreshed {
     ids: Vec<String>,
     /// Whether the remote answered the read of the promotion targets.
     targets: bool,
+    /// What accepting this actor's talks did (`detail.talk_accept`), online only.
+    talk_accept: Option<Value>,
 }
 
 /// Fetches what a status read judges: the trunk first, then at once each set of refs that no
 /// other of these fetches writes (a fleet finding, 2026-10-31: nine fetches one after another
 /// took 16.5 s of a 42 s status). The receipts' sync and the chains it may push stay in one
-/// thread, in that order. Offline, only the log and the chains are tried, as before.
+/// thread, in that order. Online, this actor's talks are accepted beside them (G612: a talk's
+/// three round trips, one after another past the others, took 4 s of a 15 s status). Offline,
+/// only the log and the chains are tried, as before.
 fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
     let (trunk, fetched_at) = synchronize(repo)?;
     let online = fetched_at.is_some();
-    let (ids, targets) = std::thread::scope(|scope| {
+    let (ids, targets, talk_accept) = std::thread::scope(|scope| {
+        // § 11c: a fetching command on the recipient's machine accepts and acks its talks.
+        let talks = online
+            .then(|| scope.spawn(|| crate::talk::poll::command(repo, crate::live::unix_now())));
         let chains = scope.spawn(move || {
             let _ = receipts::sync(repo);
             listed(repo, &Chain::new(&repo.git), named)
@@ -248,6 +255,11 @@ fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
             targets
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            talks.and_then(|talks| {
+                talks
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            }),
         )
     });
     Ok(Refreshed {
@@ -255,6 +267,7 @@ fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
         fetched_at,
         ids: ids?,
         targets,
+        talk_accept,
     })
 }
 
@@ -268,16 +281,12 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
         fetched_at,
         ids,
         targets: targets_fetched,
+        talk_accept,
     } = fetch_all(
         &repo,
         change.map(str::to_owned).or_else(|| repo.view_change(dir)),
     )?;
     let pending = receipts::pending(&repo);
-    // § 11c: a fetching command on the recipient's machine accepts and acks its talks.
-    let talk_accept = fetched_at
-        .is_some()
-        .then(|| crate::talk::poll::command(&repo, crate::live::unix_now()))
-        .flatten();
     let chain = Chain::new(&repo.git);
     // The runtime adapter is asked only for a change this read names: a listing of every
     // change stays bounded however many have landed.

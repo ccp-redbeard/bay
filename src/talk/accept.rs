@@ -201,13 +201,22 @@ fn accept(repo: &Repo, trust: &Trust) -> Result<Outcome, String> {
         )));
     }
     let prefix = format!("{TALK_PREFIX}{}/", me.name);
-    fetch_sent(repo, &prefix, &me.name)?;
-    let Some((remote, registry_tip)) = remote_tips(repo, &prefix) else {
+    // G612: one fetch brings this actor's talks and the ones it sent, and the listing of what
+    // the remote holds runs beside it: two round trips at once, not three in turn.
+    let (fetched, listed) = std::thread::scope(|scope| {
+        let fetched = scope.spawn(|| fetch_talks(repo, &prefix, &me.name));
+        let listed = remote_tips(repo, &prefix);
+        let fetched = fetched
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        (fetched, listed)
+    });
+    fetched?;
+    let Some((remote, registry_tip)) = listed else {
         return Ok(Outcome::new("not_fetched")
             .why("the remote did not list this actor's talks".to_owned()));
     };
     let trust = refreshed(repo, trust.clone(), registry_tip.as_deref())?;
-    fetch_matching(repo, &format!("{prefix}*"));
     let mut outcome = Outcome::new("accepted");
     let talks = talks_matching(&repo.git, &prefix)?;
     let key = match &trust {
@@ -637,23 +646,22 @@ fn push_moved(
 /// The most sent talks one accept fetches: the newest open ones.
 const SENT_FETCH_MAX: usize = 64;
 
-/// Fetches, fast-forward only, the talks this actor sent to others that hold no close here, the
-/// newest [`SENT_FETCH_MAX`], so it sees their acks and answers. A chain takes no entry after its
+/// Fetches, fast-forward only and in one round trip, this actor's own talks (every ref under
+/// `own`) and the talks it sent to others that hold no close here, the newest
+/// [`SENT_FETCH_MAX`], so it sees their acks and answers. A chain takes no entry after its
 /// close, so there is nothing more to fetch; the list stays flat however many talks the actor has
 /// sent. An answered discovery talk is still fetched: a later answer may supersede its answer.
-fn fetch_sent(repo: &Repo, own: &str, me: &str) -> Result<(), String> {
+fn fetch_talks(repo: &Repo, own: &str, me: &str) -> Result<(), String> {
     let mut sent = talks_where(&repo.git, TALK_PREFIX, |talk| {
         !talk.name.starts_with(own) && talk.from_name() == me && !talk.has("close")
     })?;
     sent.sort_by(|a, b| (b.sent(), &b.id).cmp(&(a.sent(), &a.id)));
-    let refspecs: Vec<String> = sent
-        .iter()
-        .take(SENT_FETCH_MAX)
-        .map(|talk| format!("{0}:{0}", talk.name))
-        .collect();
-    if refspecs.is_empty() {
-        return Ok(());
-    }
+    let mut refspecs = vec![format!("{own}*:{own}*")];
+    refspecs.extend(
+        sent.iter()
+            .take(SENT_FETCH_MAX)
+            .map(|talk| format!("{0}:{0}", talk.name)),
+    );
     let mut args = vec!["fetch", "-q", "--no-tags", repo.remote()];
     args.extend(refspecs.iter().map(String::as_str));
     let _ = repo.git.run(&args);

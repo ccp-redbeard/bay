@@ -1,7 +1,7 @@
 //! A5 (a fleet's sandbox run of 0.5.39): the sender of a talk hears its replies in session.
 //!
 //! A talk's ack, backbriefs, answer and close are entries the recipient's bay writes on the
-//! talk's chain, and the sender's poll already fetches them (`accept::fetch_sent`). Its bay read
+//! talk's chain, and the sender's poll already fetches them (`accept::fetch_talks`). Its bay read
 //! them only in `bay status` and `bay watch`; its session was told nothing. Now a hook tells each
 //! new entry once: the talk, the recipient, a fixed word for the entry, and where to read it.
 //! Never the entry's text (ruling R13).

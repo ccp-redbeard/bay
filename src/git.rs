@@ -9,7 +9,8 @@
 //!
 //! G171: a test build counts its Git spawns. With `BAY_TEST_GIT_TRACE` naming a file, each
 //! `git` this process runs appends one JSON line there when it ends: its subcommand, its
-//! arguments, its duration in microseconds from spawn to exit, and its exit code (`null` when
+//! arguments, its duration in microseconds from spawn to exit, its end in microseconds since the
+//! Unix epoch (so a test can tell two spawns overlapped), and its exit code (`null` when
 //! killed). A release build (`BAY_RELEASE_VERSION` set at build time) never reads the variable.
 //!
 //! G200: a handle lists its repository's config once ([`Git::config_get`]) and answers bay's
@@ -1011,10 +1012,16 @@ pub(crate) fn trace(cmd: &Command, started: Instant, code: Option<i32>) {
         return;
     }
     let micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let end = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
+        });
     let mut line = serde_json::json!({
         "sub": subcommand(cmd),
         "args": args_of(cmd),
         "us": micros,
+        "end": end,
         "exit": code,
         "pid": std::process::id(),
     })

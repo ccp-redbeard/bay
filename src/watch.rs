@@ -184,16 +184,20 @@ fn run(dir: &Path, since: Option<&Cursor>, landed_only: bool) -> Result<BayResul
     // Best effort, as `status`: offline, the local cache is what this read can see, and
     // `freshness` says so.
     let fetched_at = repo.fetch_trunk().ok().map(|_| now_rfc3339());
-    crate::log::fetch(&repo);
-    // NEW-4: the lane refs a landing outside bay is judged against, as the remote holds them.
-    if fetched_at.is_some() {
-        crate::lane::fetch(&repo);
-    }
-    // § 11c: a fetching command on the recipient's machine accepts and acks its talks.
-    let talk_accept = fetched_at
-        .is_some()
-        .then(|| crate::talk::poll::command(&repo, crate::live::unix_now()))
-        .flatten();
+    let online = fetched_at.is_some();
+    // G612: the log, the lanes and this actor's talks are fetched at once, not in turn: no two
+    // of them write the same refs.
+    let talk_accept = std::thread::scope(|scope| {
+        scope.spawn(|| crate::log::fetch(&repo));
+        // NEW-4: the lane refs a landing outside bay is judged against, as the remote holds them.
+        if online {
+            scope.spawn(|| crate::lane::fetch(&repo));
+        }
+        // § 11c: a fetching command on the recipient's machine accepts and acks its talks.
+        online
+            .then(|| crate::talk::poll::command(&repo, crate::live::unix_now()))
+            .flatten()
+    });
     let trunk = repo
         .git
         .run(&["rev-parse", "--verify", &repo.trunk_tracking_ref()])
