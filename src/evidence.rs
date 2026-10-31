@@ -499,9 +499,9 @@ pub fn records_for_many(git: &Git, trees: &[&str]) -> Result<Vec<Vec<EvidenceRec
 ///
 /// Git finds a note at any fanout of its notes tree (`<tree>`, `ab/<rest>`, `ab/cd/<rest>`
 /// and so on; `git notes add` picks one by the number of notes), so each producer's note is
-/// asked at every fanout and found at the one its tree holds. A tree that is not a full object
-/// id is read producer by producer as before, and every tree is when `cat-file` cannot read
-/// the store.
+/// asked at every fanout its notes tree has the directories for ([`fanouts`]) and found at the
+/// one its tree holds. A tree that is not a full object id is read producer by producer as
+/// before, and every tree is when `cat-file` cannot read the store.
 ///
 /// # Errors
 ///
@@ -520,16 +520,24 @@ fn notes_on(
     if producers.is_empty() {
         return Ok(trees.iter().map(|_| Vec::new()).collect());
     }
+    let fanouts = match fanouts(git, producers, trees) {
+        Ok(fanouts) => fanouts,
+        Err(GitError::Failed { .. }) => {
+            return trees.iter().map(|tree| one_by_one(tree)).collect();
+        }
+        Err(error) => return Err(error.message()),
+    };
     let mut input = String::new();
-    for tree in trees
+    for (tree, fanouts) in trees
         .iter()
-        .filter(|tree| crate::compact::is_object_id(tree))
+        .zip(&fanouts)
+        .filter(|(tree, _)| crate::compact::is_object_id(tree))
     {
-        for producer in producers {
-            for path in note_paths(tree) {
+        for (producer, &fanout) in producers.iter().zip(fanouts) {
+            for levels in 0..=fanout {
                 input.push_str(&notes_ref(producer));
                 input.push(':');
-                input.push_str(&path);
+                input.push_str(&note_path(tree, levels));
                 input.push('\n');
             }
         }
@@ -548,17 +556,18 @@ fn notes_on(
     let mut replies = out.as_slice();
     trees
         .iter()
-        .map(|tree| {
+        .zip(&fanouts)
+        .map(|(tree, fanouts)| {
             if !crate::compact::is_object_id(tree) {
                 return one_by_one(tree);
             }
-            let paths = note_paths(tree).len();
             producers
                 .iter()
-                .map(|producer| {
+                .zip(fanouts)
+                .map(|(producer, &fanout)| {
                     let notes = notes_ref(producer);
                     let mut found = None;
-                    for _ in 0..paths {
+                    for _ in 0..=fanout {
                         if let Some(blob) = next_reply(&mut replies, &notes, tree)? {
                             if found.is_some() {
                                 return Err(format!("{notes} on {tree}: more than one note"));
@@ -579,20 +588,69 @@ fn notes_on(
         .collect()
 }
 
-/// Every path a note on `tree` may sit at in a notes tree: flat, then each fanout of two hex
-/// digits per level, as Git's notes reader accepts them.
-fn note_paths(tree: &str) -> Vec<String> {
-    (0..tree.len() / 2)
-        .map(|levels| {
-            let mut path = String::with_capacity(tree.len() + levels);
-            for level in 0..levels {
-                path.push_str(&tree[level * 2..level * 2 + 2]);
-                path.push('/');
-            }
-            path.push_str(&tree[levels * 2..]);
-            path
-        })
-        .collect()
+/// G607 (a fleet finding, 2026-10-31: a records read asked each producer's note at all 20
+/// fanouts a notes tree may hold it, 260 names a tree on a box with 13 producers, about 20 ms
+/// a tree of every status, landing and red judgement): how many fanout directories of each of
+/// `trees` each producer's notes tree holds, `fanouts[tree][producer]`. A level is asked with
+/// one `git cat-file --batch-check` for every tree and producer at once, and only under a
+/// directory the level above holds: a note sits under its directories, so no note is deeper
+/// than they go. A tree that is not a full object id holds none.
+///
+/// # Errors
+///
+/// A git fault.
+fn fanouts(git: &Git, producers: &[&str], trees: &[&str]) -> Result<Vec<Vec<usize>>, GitError> {
+    let mut fanouts = vec![vec![0; producers.len()]; trees.len()];
+    let mut open: Vec<(usize, usize)> = trees
+        .iter()
+        .enumerate()
+        .filter(|(_, tree)| crate::compact::is_object_id(tree))
+        .flat_map(|(at, _)| (0..producers.len()).map(move |producer| (at, producer)))
+        .collect();
+    let mut levels = 1;
+    while !open.is_empty() {
+        open.retain(|&(at, _)| levels < trees[at].len() / 2);
+        let names: Vec<String> = open
+            .iter()
+            .map(|&(at, producer)| {
+                format!(
+                    "{}:{}",
+                    notes_ref(producers[producer]),
+                    fanout_dir(trees[at], levels)
+                )
+            })
+            .collect();
+        let ids = git.object_ids(&names)?;
+        open = open
+            .into_iter()
+            .zip(ids)
+            .filter_map(|(at, id)| id.map(|_| at))
+            .collect();
+        for &(at, producer) in &open {
+            fanouts[at][producer] = levels;
+        }
+        levels += 1;
+    }
+    Ok(fanouts)
+}
+
+/// The path a note on `tree` sits at in a notes tree under `levels` fanout directories of two
+/// hex digits each, as Git's notes reader accepts it: `tree` itself under none.
+fn note_path(tree: &str, levels: usize) -> String {
+    let mut path = fanout_dir(tree, levels);
+    if levels > 0 {
+        path.push('/');
+    }
+    path.push_str(&tree[levels * 2..]);
+    path
+}
+
+/// The first `levels` fanout directories on the path of a note on `tree`: `ab/cd` at two.
+fn fanout_dir(tree: &str, levels: usize) -> String {
+    (0..levels)
+        .map(|level| &tree[level * 2..level * 2 + 2])
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// The next reply of a `git cat-file --batch` in `replies`: the blob's contents, or `None`

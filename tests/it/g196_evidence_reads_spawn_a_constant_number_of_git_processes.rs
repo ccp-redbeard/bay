@@ -21,7 +21,7 @@ use support::{PRODUCER, TestBox, check_files, passing_result, result_json};
 
 /// A box with one change landed under a passing check. Returns the box, the repo, the change
 /// id and the landed tree.
-fn landed() -> (TestBox, PathBuf, String, String) {
+pub(crate) fn landed() -> (TestBox, PathBuf, String, String) {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
     let files = check_files("true", &passing_result(1), 1, 60);
@@ -166,7 +166,7 @@ fn a_status_spawns_as_many_git_processes_with_five_producers_as_with_one() {
 }
 
 /// A notes ref of `name` holding `record` on `tree` at `levels` of two-hex-digit fanout.
-fn fanned_note(test_box: &TestBox, repo: &Path, tree: &str, name: &str, levels: usize) {
+pub(crate) fn fanned_note(test_box: &TestBox, repo: &Path, tree: &str, name: &str, levels: usize) {
     let mut text =
         serde_json::to_string_pretty(&vec![record_of(&Git::new(repo), tree, name)]).unwrap();
     text.push('\n');
