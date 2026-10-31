@@ -23,7 +23,7 @@ use support::{TestBox, check_files, passing_result, result_json};
 const POST: &str = "\n[[check]]\nid = \"suite\"\nenvironment = \"local\"\nstage = \"post\"\ncommand = \"scripts/bay-check suite\"\nadapter = [\"scripts/bay-check\"]\nexpected_minimum = 1\ntimeout_s = 60\nwhen_paths = [\"src/**\"]\n";
 
 /// Lands a change that writes `path` under `src/`, with `bay merge --wait`.
-fn land(test_box: &TestBox, repo: &Path, path: &str) {
+pub(crate) fn land(test_box: &TestBox, repo: &Path, path: &str) {
     let started = test_box.bay_ok(repo, &["start", path, "--paths", "src/"]);
     let view = PathBuf::from(started["detail"]["view"].as_str().unwrap());
     std::fs::write(view.join(path), format!("{path}\n")).unwrap();

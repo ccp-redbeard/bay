@@ -517,15 +517,19 @@ fn flakes(
             trunk,
         ])
         .map_err(|error| error.message())?;
+    let landings: Vec<(&str, &str)> = landings
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .collect();
+    // G608: one read of the window's records, never one a landing (a fleet finding, 2026-10-31:
+    // the window of 60 landings cost a status about 60 reads of the evidence refs).
+    let trees: Vec<&str> = landings.iter().map(|&(_, tree)| tree).collect();
+    let records_of = evidence::records_for_many(git, &trees)?;
     let mut counts = vec![0_u64; required.len()];
     let mut read = 0_u64;
-    for (commit, tree) in landings.lines().filter_map(|line| line.split_once(' ')) {
+    for (&(commit, _), records) in landings.iter().zip(records_of) {
         read += 1;
-        let records = policy.answering(evidence::counted(
-            git,
-            evidence::records_for(git, tree)?,
-            registry,
-        )?);
+        let records = policy.answering(evidence::counted(git, records, registry)?);
         for (entry, count) in required.iter().zip(counts.iter_mut()) {
             let id = evidence::CheckId::new(&entry.id, &entry.environment);
             let subject = policy.commit_keyed(&id).then_some(commit);
