@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.19
+
+- `bay update` names the installed and the new version; a pin below the installed bay is never its target.
+- Session start writes `BAY_ACTOR` only when the environment named it.
+- A status of a change a fault stopped says why and what to do next.
+- A wait on a stopped change names that change, and the runner parks it.
+- `bay status` fetches its refs at once, and accepts this actor's talks beside them in two round trips.
+- `bay status --since` fetches the log, the lanes and the talks at once.
+- `bay status` judges main's red from the judgement the last status saved, reading only what moved.
+- A records read asks a note only where its notes tree has directories; the flake window is one read.
+- A listing checks only the reader's own views for leftovers.
+- A status settles the chains it fetched in one read, and reads the landings' policies in one batch.
+- A process reads each change record once; a later read of every change batches only the heads that moved.
+
 ## 0.6.18
 
 - A runner does not claim an operation another runner blocked, until its re-arm reaches the remote.
