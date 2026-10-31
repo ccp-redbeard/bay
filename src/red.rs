@@ -70,6 +70,7 @@
 //! once main is green the change runs before every change submitted after it.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
@@ -651,6 +652,28 @@ pub fn holds_place(
 ///
 /// A git fault, or a committed config bay cannot read.
 pub fn judged(git: &Git, trunk: &str, registry: Option<&Registry>) -> Result<Judgement, String> {
+    judged_from(git, trunk, registry, false)
+}
+
+/// [`judged`], for a read that only shows the judgement (`bay status`): the first judgement of
+/// a process starts from the last one a status of this repository saved, and each saves its
+/// own (G606, a fleet finding, 2026-10-31: each status judged the whole window again, 9 s of a
+/// 42 s status). A runner never reads it: what gates a merge, it judges from its own reads.
+///
+/// # Errors
+///
+/// A git fault, or a committed config bay cannot read.
+pub fn shown(git: &Git, trunk: &str, registry: Option<&Registry>) -> Result<Judgement, String> {
+    judged_from(git, trunk, registry, true)
+}
+
+/// [`judged`]; when `shared`, starting from and saving the judgement of [`SAVED_FILE`].
+fn judged_from(
+    git: &Git,
+    trunk: &str,
+    registry: Option<&Registry>,
+    shared: bool,
+) -> Result<Judgement, String> {
     // G430 (a fleet finding, 2026-10-28): judged once per main tip, registry and evidence in this
     // process. Every head's turn judged the whole window from scratch, five to twelve minutes a
     // head on a loaded box with a window of 250, though nothing it reads had changed since the
@@ -676,11 +699,17 @@ pub fn judged(git: &Git, trunk: &str, registry: Option<&Registry>) -> Result<Jud
         Ok(mut last) => match last.as_mut() {
             Some(last) if last.key == key => return Ok(last.judgement.clone()),
             Some(last) => (last.judged.clone(), std::mem::take(&mut last.answers)),
+            None if shared => saved(git).map_or((None, Answered::new()), |saved| {
+                (Some(saved.judged), saved.answers)
+            }),
             None => (None, Answered::new()),
         },
         Err(_) => (None, Answered::new()),
     };
     let (judgement, judged, answers) = judge_from(git, trunk, registry, before.as_ref(), &answers)?;
+    if shared && let Some(judged) = &judged {
+        save(git, judged, &answers);
+    }
     if let Ok(mut last) = LAST.lock() {
         *last = Some(Last {
             key,
@@ -690,6 +719,53 @@ pub fn judged(git: &Git, trunk: &str, registry: Option<&Registry>) -> Result<Jud
         });
     }
     Ok(judgement)
+}
+
+/// G606: the file, in the repository's common directory, that holds the last judgement a status
+/// made, for the next status to start from ([`shown`]).
+const SAVED_FILE: &str = "red-judged.json";
+
+/// G606: a judgement as a status saved it: what decided it and the answers it read, by the bay
+/// that read them. Another bay's answers may differ, so it reads none of them.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Saved {
+    bay: String,
+    judged: Judged,
+    answers: Answered,
+}
+
+/// The judgement of [`SAVED_FILE`], when this bay saved it and it reads.
+fn saved(git: &Git) -> Option<Saved> {
+    let common = git.common_dir().ok()?;
+    let text = std::fs::read_to_string(Path::new(&common).join("bay").join(SAVED_FILE)).ok()?;
+    serde_json::from_str::<Saved>(&text)
+        .ok()
+        .filter(|saved| saved.bay == crate::version::BAY)
+}
+
+/// Saves `judged` and its `answers` to [`SAVED_FILE`], whole or not at all. A status that
+/// cannot save it judges as before.
+fn save(git: &Git, judged: &Judged, answers: &Answered) {
+    let Ok(common) = git.common_dir() else {
+        return;
+    };
+    let saved = Saved {
+        bay: crate::version::BAY.to_owned(),
+        judged: judged.clone(),
+        answers: answers.clone(),
+    };
+    let Ok(text) = serde_json::to_string(&saved) else {
+        return;
+    };
+    let dir = Path::new(&common).join("bay");
+    let partial = dir.join(format!("{SAVED_FILE}.{}.tmp", std::process::id()));
+    let written = std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(&partial, text))
+        .and_then(|()| crate::durable::rename(&partial, dir.join(SAVED_FILE)));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
 }
 
 /// G592 (a fleet finding, 2026-10-30: two heads' `red` steps took 2209 s and 2213 s side by

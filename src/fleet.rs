@@ -798,7 +798,7 @@ fn map(repo: &Repo, fetched: &Fetched) -> Result<BayResult, String> {
     // says why (G104b), never read as not red.
     let judged = trunk.as_deref().map(|trunk| {
         crate::registry::Registry::current(git)
-            .and_then(|registry| crate::red::state(git, trunk, registry.as_ref()))
+            .and_then(|registry| crate::red::shown(git, trunk, registry.as_ref()))
     });
     let red_unread = judged
         .as_ref()

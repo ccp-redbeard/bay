@@ -445,7 +445,7 @@ fn target_rows(repo: &Repo, trunk: &str, fetched: bool, read: &Read) -> Value {
 /// lists none in either and says why: an unread trunk is never read as not red.
 fn red_rows(repo: &Repo, trunk: &str) -> (Value, Value) {
     crate::registry::Registry::current(&repo.git)
-        .and_then(|registry| crate::red::state(&repo.git, trunk, registry.as_ref()))
+        .and_then(|registry| crate::red::shown(&repo.git, trunk, registry.as_ref()))
         .map_or_else(
             |why| (json!({"unread": why}), json!({"unread": why})),
             |judgement| judgement.to_json(),
