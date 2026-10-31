@@ -242,6 +242,8 @@ impl TestBox {
             // A fetching command accepts talks on every run, not once per poll interval: only
             // G445 drops this to read the bound.
             .env("BAY_TEST_TALK_COMMAND_UNBOUNDED", "1")
+            // Every status read asks the remote: only G617 opens the window a sweep serves.
+            .env("BAY_TEST_SWEPT_S", "0")
             // The host's user-namespace restriction never reaches a test: see `userns_restricted`.
             .env(
                 "BAY_TEST_USERNS_RESTRICT",
@@ -261,6 +263,7 @@ impl TestBox {
             .env("GIT_CONFIG_GLOBAL", &self.global_config)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CEILING_DIRECTORIES", self.path())
+            .env("BAY_TEST_SWEPT_S", "0")
             // The host's user-namespace restriction never reaches a test: see `userns_restricted`.
             .env(
                 "BAY_TEST_USERNS_RESTRICT",
@@ -276,6 +279,7 @@ impl TestBox {
             .env("GIT_CONFIG_GLOBAL", &self.global_config)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CEILING_DIRECTORIES", self.path())
+            .env("BAY_TEST_SWEPT_S", "0")
             // The host's user-namespace restriction never reaches a test: see `userns_restricted`.
             .env(
                 "BAY_TEST_USERNS_RESTRICT",

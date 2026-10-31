@@ -503,7 +503,15 @@ impl Git {
             }
             run_bounded_for(cmd, &args_display, input, timeout)
         };
-        let mut output = run()?;
+        let output = run();
+        // G617: a push, landed or not, may have changed what the remote holds, so no sweep that
+        // began before it ends serves a status read.
+        if args.first() == Some(&"push")
+            && let Some(common) = self.store_dir()
+        {
+            crate::sweep::pushed(&common, crate::live::unix_now());
+        }
+        let mut output = output?;
         if self.lazy_fetch {
             return Ok(output);
         }
@@ -715,6 +723,39 @@ impl Git {
     #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// The common directory of the store this handle reads, as [`Git::common_dir`] found it, or
+    /// else from the files Git keeps there and never a spawn: the `.git` of the nearest work tree
+    /// up from its directory (a linked work tree's names its directory), and that directory's
+    /// `commondir` when it has one.
+    fn store_dir(&self) -> Option<PathBuf> {
+        if let Some(known) = COMMON_DIRS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&self.dir)
+        {
+            return Some(PathBuf::from(known));
+        }
+        let git_dir = if self.bare_dir {
+            self.dir.clone()
+        } else {
+            let dir = std::fs::canonicalize(&self.dir).ok()?;
+            let (root, dot) = dir
+                .ancestors()
+                .map(|root| (root, root.join(".git")))
+                .find(|(_, dot)| dot.exists())?;
+            if dot.is_dir() {
+                dot
+            } else {
+                let text = std::fs::read_to_string(&dot).ok()?;
+                root.join(text.strip_prefix("gitdir:")?.trim())
+            }
+        };
+        Some(match std::fs::read_to_string(git_dir.join("commondir")) {
+            Ok(common) => git_dir.join(common.trim()),
+            Err(_) => git_dir,
+        })
     }
 
     /// Whether `rev` names an existing object.

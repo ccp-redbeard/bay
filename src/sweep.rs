@@ -6,11 +6,26 @@
 //! ref, and names each update it would make. bay then makes only the updates that each
 //! namespace's own rule allows, in one ref transaction. When nothing moved, no object comes and
 //! no ref is written.
+//!
+//! G617 (a fleet finding, 2026-10-31: the sweep alone took 3.2 to 4.0 s of each status on a
+//! hosted remote, however few refs had moved): a listing's sweep serves every status read of this
+//! store for [`BAY_SWEPT_S`] after it. Inside that window a read asks the remote nothing, reads
+//! the store as that sweep left it, and names that sweep's time as its `fetched_at`. A push from
+//! this store ends the window of every sweep that began before the push ended, so the read after
+//! a write asks the remote again.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+
+use serde_json::{Value, json};
 
 use crate::git::{Git, GitError};
+
+/// How long, in seconds, a listing's sweep serves the status reads of its store after it.
+pub const BAY_SWEPT_S: u64 = 15;
+
+const TEST_HOOKS: bool = option_env!("BAY_RELEASE_VERSION").is_none();
 
 /// One update the fetch would make to the local ref it names.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +49,8 @@ pub struct Swept {
     pub moves: BTreeMap<String, Move>,
     /// When the remote was asked: taken before the sweep, so it never overstates (G80).
     pub at: String,
+    /// The same time, in Unix seconds.
+    pub unix: u64,
 }
 
 impl Swept {
@@ -72,7 +89,8 @@ impl Swept {
 ///
 /// The remote cannot be read, or lacks a ref a refspec names exactly.
 pub fn sweep(git: &Git, remote: &str, refspecs: &[String]) -> Result<Swept, GitError> {
-    let at = crate::clock::now_rfc3339();
+    let unix = crate::live::unix_now();
+    let at = crate::clock::rfc3339_of(unix);
     let mut args = vec![
         "fetch",
         "--dry-run",
@@ -86,7 +104,72 @@ pub fn sweep(git: &Git, remote: &str, refspecs: &[String]) -> Result<Swept, GitE
     Ok(Swept {
         moves: parse(&listed),
         at,
+        unix,
     })
+}
+
+/// The window, in seconds: [`BAY_SWEPT_S`], or in a test build `BAY_TEST_SWEPT_S`.
+fn window_s() -> u64 {
+    std::env::var("BAY_TEST_SWEPT_S")
+        .ok()
+        .filter(|_| TEST_HOOKS)
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(BAY_SWEPT_S)
+}
+
+/// The record of the last listing's sweep of the store whose common directory is `common`.
+fn record(common: &Path) -> PathBuf {
+    common.join("bay").join("swept.json")
+}
+
+/// When the store last pushed, in Unix seconds ([`pushed`]).
+fn push_mark(common: &Path) -> PathBuf {
+    common.join("bay").join("swept-pushed")
+}
+
+/// The time of the last listing's sweep of `remote` by `refspecs` in this store, while its
+/// window is open at `now`; `None` when no such sweep is that recent, or the store pushed after
+/// it began.
+#[must_use]
+pub fn window(common: &Path, remote: &str, refspecs: &[String], now: u64) -> Option<String> {
+    let text = std::fs::read_to_string(record(common)).ok()?;
+    let held: Value = serde_json::from_str(&text).ok()?;
+    let unix = held["unix"].as_u64()?;
+    let pushed = std::fs::read_to_string(push_mark(common))
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok());
+    let open = held["remote"] == remote
+        && held["refspecs"] == json!(refspecs)
+        && pushed.is_none_or(|pushed| pushed < unix)
+        && unix <= now
+        && now < unix.saturating_add(window_s());
+    open.then(|| held["at"].as_str().map(str::to_owned))?
+}
+
+/// Records that a listing's sweep of `remote` by `refspecs` settled this store, so the reads in
+/// its window are served by it. Best effort: a record that cannot be written opens no window.
+pub fn remember(common: &Path, remote: &str, refspecs: &[String], swept: &Swept) {
+    let path = record(common);
+    let held = json!({"remote": remote, "refspecs": refspecs, "at": swept.at, "unix": swept.unix});
+    replace(&path, &held.to_string());
+}
+
+/// Records that the store whose common directory is `common` pushed at `now`: a push may have
+/// changed what the remote holds, so no sweep that began at or before it serves a read. A push
+/// that ends inside the second a sweep began closes that sweep's window too.
+pub fn pushed(common: &Path, now: u64) {
+    replace(&push_mark(common), &now.to_string());
+}
+
+/// Writes `text` at `path` whole, through a file of this process beside it. Best effort.
+fn replace(path: &Path, text: &str) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = crate::durable::rename(&tmp, path);
+    }
 }
 
 /// The moves of `git fetch --porcelain`: lines of a flag, the old and new object ids, and the
@@ -160,6 +243,7 @@ mod tests {
         let swept = Swept {
             moves,
             at: String::new(),
+            unix: 0,
         };
         assert_eq!(swept.remote_of("refs/bay/fleet/gone", Some(&a)), None);
         assert_eq!(

@@ -468,6 +468,8 @@ fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
 /// fetched as before. `None` when a sweep cannot serve the read, which then fetches as before
 /// ([`fetch_all`]): no config at the trunk this store holds, a partial clone (a sweep's mixed
 /// fetch carries no filter, `Git::run`), or a sweep that fails (offline, or a git that cannot).
+/// Inside the window of a listing's sweep (G617), the read is served by the store as that sweep
+/// left it ([`windowed`]).
 fn fetch_swept(
     dir: &Path,
     change: Option<&str>,
@@ -501,11 +503,56 @@ fn fetch_swept(
             .iter()
             .map(|(reference, local)| format!("+{reference}*:{local}*")),
     );
+    let named = change.map(str::to_owned).or_else(|| first.view_change(dir));
+    let now = crate::live::unix_now();
+    if let Some(at) = sweep::window(&first.common_dir, first.remote(), &refspecs, now)
+        && let Some(refreshed) = windowed(&first, named.clone(), held.clone(), at)
+    {
+        return Some(Ok((first, refreshed)));
+    }
     let swept = sweep::sweep(&first.git, first.remote(), &refspecs).ok()?;
     let trunk = swept
         .remote_of(&tracking, held.as_deref())
         .map(str::to_owned)?;
-    Some(settle_swept(dir, change, first, &swept, &targets, trunk))
+    let (common, remote) = (first.common_dir.clone(), first.remote().to_owned());
+    let settled = settle_swept(dir, change, first, &swept, &targets, trunk);
+    // Only a listing settles every live chain, so only a listing's sweep serves the reads after
+    // it.
+    if named.is_none() && settled.is_ok() {
+        sweep::remember(&common, &remote, &refspecs, &swept);
+    }
+    Some(settled)
+}
+
+/// G617: what [`fetch_swept`] refreshes, inside the window of a listing's sweep
+/// ([`sweep::window`]): the store as that sweep at `at` left it, and no remote asked; the trunk
+/// is `held`, this store's. `None` when the window cannot serve the read: the store holds no
+/// trunk, or no chain of the change the read names, which then comes from the remote.
+fn windowed(
+    repo: &Repo,
+    named: Option<String>,
+    held: Option<String>,
+    at: String,
+) -> Option<Refreshed> {
+    let trunk = held?;
+    let chain = Chain::new(&repo.git);
+    let ids = match named {
+        Some(id) => {
+            chain.head(&id).ok()??;
+            vec![id]
+        }
+        None => live_ids(repo, &chain).ok()?,
+    };
+    // The sweep brought the evidence notes red, flakes, post checks and targets judge.
+    repo.swept_evidence();
+    Some(Refreshed {
+        trunk,
+        fetched_at: Some(at),
+        ids,
+        targets: true,
+        // § 11c: a fetching command accepts and acks this actor's talks, once a poll interval.
+        talk_accept: crate::talk::poll::command(repo, crate::live::unix_now()),
+    })
 }
 
 /// The local half of [`fetch_swept`]: the moves `swept` found, each namespace by its rule.
