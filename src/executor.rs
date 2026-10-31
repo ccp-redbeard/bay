@@ -1017,14 +1017,14 @@ impl Parked {
         self.0.contains_key(op_id)
     }
 
-    /// Notes `row`, a visit's: a wait on changes not submitted is parked with the heads it read,
-    /// and any other outcome ends what was parked for its operation.
+    /// Notes `row`, a visit's: a wait on changes not submitted or stopped (G604) is parked with
+    /// the heads it read, and any other outcome ends what was parked for its operation.
     fn note(&mut self, repo: &Repo, row: &Value) {
         let (Some(change), Some(op_id)) = (row["change"].as_str(), row["op_id"].as_str()) else {
             return;
         };
         let waits = if row["reason"].as_str() == Some(Reason::DependencyPending.code()) {
-            crate::after::unsubmitted(row.get("detail"))
+            crate::after::stalled(row.get("detail"))
         } else {
             Vec::new()
         };
@@ -1085,14 +1085,11 @@ fn op_line(op_id: &str, result: &BayResult) -> String {
         line.push_str(": ");
         line.extend(why.chars().take(400));
     }
-    // BACKLOG 157: a wait on a change that was never submitted names it and who must send it.
+    // BACKLOG 157, G604: a wait on a change that was never submitted, or that stopped, names it
+    // and who must act on it.
     if result.reason == Some(Reason::DependencyPending) {
-        for dependency in crate::after::unsubmitted(result.detail.as_ref()) {
-            let _ = write!(
-                line,
-                "; {} is not submitted: its actor {} must run bay merge for it",
-                dependency.change, dependency.actor
-            );
+        for dependency in crate::after::stalled(result.detail.as_ref()) {
+            let _ = write!(line, "; {}", dependency.clause());
         }
     }
     line
@@ -1917,6 +1914,25 @@ mod tests {
         assert_eq!(
             op_line("abcd1234.1", &waiting),
             "abcd1234.1 queued DEPENDENCY_PENDING; c1 is not submitted: its actor ann must run bay merge for it"
+        );
+    }
+
+    /// G604: a wait on a stopped change names it, its blocked operation and who must act on it.
+    #[test]
+    fn a_wait_on_a_stopped_change_names_its_block_and_who_frees_it() {
+        let waiting = BayResult::refused(Decision::Queued, Reason::DependencyPending).with_detail(
+            serde_json::json!({"pending": [
+                {"change": "c1", "state": "ready", "actor": "ann", "head": "h",
+                    "blocked": {"op": "c1.2", "reason": "CHECK_FAILED"}},
+                {"change": "c2", "state": "ready", "actor": "bo", "head": "h",
+                    "blocked": {"op": "c2.1", "reason": "APPROVAL_PENDING"}},
+                {"change": "c3", "state": "ready", "actor": "cy", "head": "h",
+                    "blocked": {"op": "c3.1", "reason": null}},
+            ]}),
+        );
+        assert_eq!(
+            op_line("abcd1234.1", &waiting),
+            "abcd1234.1 queued DEPENDENCY_PENDING; c1 is blocked (c1.2 CHECK_FAILED): its actor ann must act on it, as bay status c1 says; c2 waits for an approval (c2.1): an approver must run bay approve c2; c3 is blocked (c3.1): its actor cy must act on it, as bay status c3 says"
         );
     }
 

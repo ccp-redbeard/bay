@@ -5209,7 +5209,7 @@ fn config_gate(
 /// G273: the result of `op_id` while a change it lands after is not on trunk at `trunk`, read
 /// with no write: `DEPENDENCY_ABANDONED` (blocked) when one ended without landing, else
 /// `DEPENDENCY_PENDING` (queued) when one has not landed yet, naming each that is not submitted
-/// and its actor, else `None`.
+/// or stopped (G604) and who must act on it, else `None`.
 fn dependency_waiting(ctx: &Ctx, op_id: &str, trunk: &str) -> Result<Option<BayResult>, String> {
     use crate::after::Standing;
     use std::fmt::Write as _;
@@ -5246,7 +5246,7 @@ fn dependency_waiting(ctx: &Ctx, op_id: &str, trunk: &str) -> Result<Option<BayR
         .filter(|dependency| {
             matches!(
                 dependency.standing,
-                Standing::Pending(_) | Standing::Unsubmitted { .. }
+                Standing::Pending(_) | Standing::Unsubmitted { .. } | Standing::Blocked { .. }
             )
         })
         .collect();
@@ -5261,15 +5261,10 @@ fn dependency_waiting(ctx: &Ctx, op_id: &str, trunk: &str) -> Result<Option<BayR
         "this change merges only after {}, not yet merged into main",
         names.join(", ")
     );
-    // BACKLOG 157: a change no request was made for never merges by waiting; who sends it is named.
-    for dependency in &pending {
-        if let Standing::Unsubmitted { actor, .. } = &dependency.standing {
-            let _ = write!(
-                why,
-                "; {} is not submitted: its actor {actor} must run bay merge for it",
-                dependency.change
-            );
-        }
+    // BACKLOG 157, G604: a change no request was made for, or one that stopped, never merges by
+    // waiting; who must act on it is named.
+    for stalled in pending.iter().filter_map(|dependency| dependency.stalled()) {
+        let _ = write!(why, "; {}", stalled.clause());
     }
     let mut result = BayResult::refused(Decision::Queued, Reason::DependencyPending)
         .with_change(ctx.id.clone())

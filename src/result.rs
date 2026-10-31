@@ -1178,7 +1178,7 @@ impl Reason {
                 "Run `bay start` again with `--from <commit>`: `detail.local` takes this repository's branch, `detail.remote` the remote's. Or push yours first."
             }
             Self::DependencyPending => {
-                "Wait: it merges once each change it names with `--after` merges. A `detail.pending` entry with `submitted: false` needs its actor to run `bay merge`."
+                "Wait: it merges once each `--after` change merges. A `detail.pending` entry with `submitted: false` needs `bay merge`; one `blocked` needs what `bay status <change>` says."
             }
             Self::DependencyAbandoned => {
                 "Run `bay abandon`, then `bay start <intent> --new` without that `--after`; or restart the dropped change."
@@ -1377,15 +1377,27 @@ impl Reason {
                 "bay does not guard this project yet: {count} of the last {window} changes reached main without its checks. Turn on its safety settings, then run bay install."
             );
         }
-        // BACKLOG 157: a change it lands after that was never submitted is named, with who sends it.
+        // BACKLOG 157, G604: a change it lands after that was never submitted, or that stopped,
+        // is named, with who must act on it.
         if self == Self::DependencyPending
-            && let Some(first) = crate::after::unsubmitted(detail).first()
+            && let Some(first) = crate::after::stalled(detail).first()
         {
-            return format!(
-                "Saved. It waits for {}, which is not submitted yet: {} must run bay merge for it.",
-                plain(&first.change),
-                plain(&first.actor)
-            );
+            let change = plain(&first.change);
+            return if first.blocked.is_none() {
+                format!(
+                    "Saved. It waits for {change}, which is not submitted yet: {} must run bay merge for it.",
+                    plain(&first.actor)
+                )
+            } else if first.awaits_approval() {
+                format!(
+                    "Saved. It waits for {change}, which waits for a person's OK: an approver must run bay approve {change}."
+                )
+            } else {
+                format!(
+                    "Saved. It waits for {change}, which stopped: {} must act on it, as bay status {change} says.",
+                    plain(&first.actor)
+                )
+            };
         }
         if let Some(fixed) = self.fixed_say() {
             return fixed.to_owned();
@@ -2480,6 +2492,29 @@ mod tests {
         let submitted = BayResult::refused(Decision::Queued, Reason::DependencyPending)
             .with_detail(json!({"pending": [{"change": "c7k2m4", "state": "ready"}]}));
         assert_eq!(submitted.say(), Reason::DependencyPending.say(None));
+    }
+
+    /// G604: a wait on a dependency that stopped names it, and who must act on it.
+    #[test]
+    fn a_wait_names_a_stopped_dependency_and_who_frees_it() {
+        let stopped = |reason: serde_json::Value| {
+            BayResult::refused(Decision::Queued, Reason::DependencyPending).with_detail(json!({
+                "pending": [{"change": "c7k2m4", "state": "ready", "actor": "ann", "head": "h",
+                    "blocked": {"op": "c7k2m4.1", "reason": reason}}],
+            }))
+        };
+        let fault = stopped(serde_json::Value::Null);
+        assert_eq!(
+            fault.say(),
+            "Saved. It waits for c7k2m4, which stopped: ann must act on it, as bay status c7k2m4 says."
+        );
+        assert_plain(&fault.say(), "a stopped dependency");
+        let approval = stopped(json!("APPROVAL_PENDING"));
+        assert_eq!(
+            approval.say(),
+            "Saved. It waits for c7k2m4, which waits for a person's OK: an approver must run bay approve c7k2m4."
+        );
+        assert_plain(&approval.say(), "a dependency that waits for an approval");
     }
 
     #[test]

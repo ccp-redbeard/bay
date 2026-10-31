@@ -16,12 +16,20 @@
 //! a named change with no operation under way is not submitted. The wait names it and its actor,
 //! who must `bay merge` it, and the chain head it was read at, which only a request, a landing or
 //! an end moves (`crate::executor` visits the wait again then).
+//!
+//! G604 (a fleet finding, 2026-10-31: an operation waited 22 minutes on a change whose only
+//! operation a runner had blocked, and each of 34 journal lines said only that it waits): a
+//! named change whose every open operation is blocked is stopped. It moves again only once a
+//! person acts on it (its actor, or an approver for an approval), so the wait names it, its
+//! actor, the blocked operation and its reason, and is parked on its chain head like a change
+//! that is not submitted.
 
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 
-use crate::change::{Chain, ChangeRecord, ChangeState, OpState};
+use crate::change::{Chain, ChangeRecord, ChangeState, OpState, Operation};
 use crate::repo::Repo;
+use crate::result::Reason;
 
 /// The fixed trailer a dependent's trunk commit names each of its dependencies in.
 pub const AFTER_TRAILER: &str = "Bay-After";
@@ -43,6 +51,16 @@ pub enum Standing {
         state: String,
         actor: String,
         head: String,
+    },
+    /// Not on trunk, and stopped: every operation of it that has not ended is blocked, so it
+    /// lands only once a person acts on it (G604). Its record's state, its actor, its chain
+    /// head, and the newest blocked operation with its reason code (none for a fault).
+    Blocked {
+        state: String,
+        actor: String,
+        head: String,
+        op: String,
+        reason: Option<String>,
     },
     /// Ended without landing, in this state.
     Ended(String),
@@ -72,10 +90,52 @@ impl Dependency {
                 "actor": actor,
                 "head": head,
             }),
+            Standing::Blocked {
+                state,
+                actor,
+                head,
+                op,
+                reason,
+            } => json!({
+                "change": self.change,
+                "state": state,
+                "blocked": {"op": op, "reason": reason},
+                "actor": actor,
+                "head": head,
+            }),
             Standing::Ended(state) => {
                 json!({"change": self.change, "state": state, "landed": false})
             }
             Standing::Met => json!({"change": self.change, "state": "no_effect", "met": true}),
+        }
+    }
+
+    /// This dependency as [`Stalled`], when nothing frees it by waiting.
+    #[must_use]
+    pub fn stalled(&self) -> Option<Stalled> {
+        match &self.standing {
+            Standing::Unsubmitted { actor, head, .. } => Some(Stalled {
+                change: self.change.clone(),
+                actor: actor.clone(),
+                head: head.clone(),
+                blocked: None,
+            }),
+            Standing::Blocked {
+                actor,
+                head,
+                op,
+                reason,
+                ..
+            } => Some(Stalled {
+                change: self.change.clone(),
+                actor: actor.clone(),
+                head: head.clone(),
+                blocked: Some(Block {
+                    op: op.clone(),
+                    reason: reason.clone(),
+                }),
+            }),
+            _ => None,
         }
     }
 }
@@ -134,6 +194,14 @@ fn unlanded(repo: &Repo, change: &str) -> Standing {
                 Standing::Met
             } else if ended_unlanded(record.state) {
                 Standing::Ended(state)
+            } else if let Some(op) = stopped_at(&record) {
+                Standing::Blocked {
+                    state,
+                    actor: record.actor.name.clone(),
+                    head,
+                    op: op.op_id.clone(),
+                    reason: op.outcome.clone(),
+                }
             } else if submitted(&record) {
                 Standing::Pending(state)
             } else {
@@ -162,18 +230,82 @@ fn submitted(record: &ChangeRecord) -> bool {
             .any(|op| !matches!(op.state, OpState::Failed | OpState::Superseded))
 }
 
-/// A dependency a `DEPENDENCY_PENDING` result names as not submitted ([`Standing::Unsubmitted`]).
+/// The operation `record`, which has not landed, is stopped at: its newest blocked one, when
+/// every operation of it that has not ended is blocked (G604). A blocked operation moves again
+/// only once its actor's `bay merge`, an approval or a runner's retry rewrites it, and each of
+/// those moves its chain.
+fn stopped_at(record: &ChangeRecord) -> Option<&Operation> {
+    let open = || {
+        record
+            .operations
+            .iter()
+            .filter(|op| !matches!(op.state, OpState::Failed | OpState::Superseded))
+    };
+    if record.state == ChangeState::Landed || !open().all(|op| op.state == OpState::Blocked) {
+        return None;
+    }
+    open().next_back()
+}
+
+/// A dependency a `DEPENDENCY_PENDING` result names as stalled: not submitted
+/// ([`Standing::Unsubmitted`]) or stopped ([`Standing::Blocked`]). Nothing frees it by waiting.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Unsubmitted {
+pub struct Stalled {
     pub change: String,
     pub actor: String,
     pub head: String,
+    /// The operation it is stopped at, or `None` when it is not submitted.
+    pub blocked: Option<Block>,
 }
 
-/// The dependencies `detail`, a `DEPENDENCY_PENDING` result's, names as not submitted, in the
-/// order the change named them.
+/// A stopped dependency's blocked operation, and its reason code (`None` for a fault).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Block {
+    pub op: String,
+    pub reason: Option<String>,
+}
+
+impl Stalled {
+    /// Whether only an approver frees it: it waits for an approval.
+    #[must_use]
+    pub fn awaits_approval(&self) -> bool {
+        self.blocked
+            .as_ref()
+            .and_then(|block| block.reason.as_deref())
+            == Some(Reason::ApprovalPending.code())
+    }
+
+    /// The clause a wait's `why` and a runner's journal line name it with: what stalls it, and
+    /// who frees it.
+    #[must_use]
+    pub fn clause(&self) -> String {
+        let change = &self.change;
+        match &self.blocked {
+            None => format!(
+                "{change} is not submitted: its actor {} must run bay merge for it",
+                self.actor
+            ),
+            Some(block) if self.awaits_approval() => format!(
+                "{change} waits for an approval ({}): an approver must run bay approve {change}",
+                block.op
+            ),
+            Some(block) => format!(
+                "{change} is blocked ({}{}): its actor {} must act on it, as bay status {change} says",
+                block.op,
+                block
+                    .reason
+                    .as_deref()
+                    .map_or_else(String::new, |reason| format!(" {reason}")),
+                self.actor
+            ),
+        }
+    }
+}
+
+/// The dependencies `detail`, a `DEPENDENCY_PENDING` result's, names as stalled, in the order
+/// the change named them.
 #[must_use]
-pub fn unsubmitted(detail: Option<&Value>) -> Vec<Unsubmitted> {
+pub fn stalled(detail: Option<&Value>) -> Vec<Stalled> {
     let Some(pending) = detail
         .and_then(|detail| detail.get("pending"))
         .and_then(Value::as_array)
@@ -182,12 +314,20 @@ pub fn unsubmitted(detail: Option<&Value>) -> Vec<Unsubmitted> {
     };
     pending
         .iter()
-        .filter(|dependency| dependency["submitted"] == Value::Bool(false))
         .filter_map(|dependency| {
-            Some(Unsubmitted {
+            let blocked = match dependency.get("blocked") {
+                Some(block) => Some(Block {
+                    op: block["op"].as_str()?.to_owned(),
+                    reason: block["reason"].as_str().map(str::to_owned),
+                }),
+                None if dependency["submitted"] == Value::Bool(false) => None,
+                None => return None,
+            };
+            Some(Stalled {
                 change: dependency["change"].as_str()?.to_owned(),
                 actor: dependency["actor"].as_str()?.to_owned(),
                 head: dependency["head"].as_str()?.to_owned(),
+                blocked,
             })
         })
         .collect()
