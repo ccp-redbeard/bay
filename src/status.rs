@@ -1300,19 +1300,50 @@ fn timing_of(terminal: &[Value], op_id: &str) -> Option<Value> {
 
 /// What the record of `op` is: `published`, the id of its newest receipt (synced or in
 /// `unsynced`), an outcome in the chain, or `missing`.
+/// The newest receipt of `op`, synced or not.
+fn newest_receipt<'a>(
+    record: &'a ChangeRecord,
+    unsynced: &[&'a Receipt],
+    op: &crate::change::Operation,
+) -> Option<&'a Receipt> {
+    record
+        .receipts
+        .iter()
+        .chain(unsynced.iter().copied())
+        .rev()
+        .find(|receipt| receipt.op_id.as_deref() == Some(op.op_id.as_str()))
+}
+
+/// G603: a fault stops an operation with no outcome, so no reason says why or what to do; its
+/// receipt does.
+fn fault(
+    record: &ChangeRecord,
+    unsynced: &[&Receipt],
+    op: &crate::change::Operation,
+    published: bool,
+) -> Option<Value> {
+    let stopped = matches!(
+        op.state,
+        crate::change::OpState::Blocked | crate::change::OpState::Failed
+    );
+    if published || op.outcome.is_some() || !stopped {
+        return None;
+    }
+    let receipt = newest_receipt(record, unsynced, op)?;
+    Some(json!({
+        "step": receipt.step,
+        "why": receipt.detail.as_str(),
+        "recovery": receipt.recovery,
+    }))
+}
+
 fn receipt_state(
     record: &ChangeRecord,
     unsynced: &[&Receipt],
     op: &crate::change::Operation,
     published: bool,
 ) -> Value {
-    let receipt = record
-        .receipts
-        .iter()
-        .chain(unsynced.iter().copied())
-        .rev()
-        .find(|receipt| receipt.op_id.as_deref() == Some(op.op_id.as_str()))
-        .map(|receipt| receipt.id.clone());
+    let receipt = newest_receipt(record, unsynced, op).map(|receipt| receipt.id.clone());
     // Never success without proof: an unpublished operation with no outcome and no receipt
     // has a missing record.
     match (&receipt, published, &op.outcome) {
@@ -1379,6 +1410,9 @@ fn describe(
         }
         if !published && !op.state.is_terminal() && op.state != crate::change::OpState::Blocked {
             waiting(op, &mut operation);
+        }
+        if let Some(fault) = fault(record, unsynced, op, published) {
+            operation["fault"] = fault;
         }
         if let Some(timing) = timing_of(&terminal, &op.op_id) {
             operation["timing"] = timing;

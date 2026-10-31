@@ -1757,7 +1757,9 @@ fn change_say(result: &BayResult) -> Option<String> {
     if !op["lease"].is_null() {
         return Some(format!("{id} is being checked now."));
     }
-    let outcome = op["outcome"].as_str()?;
+    let Some(outcome) = op["outcome"].as_str() else {
+        return Some(no_outcome_say(id, op));
+    };
     if outcome == Reason::Queued.code() {
         return Some(match op["place"].as_u64() {
             Some(place) => format!(
@@ -1767,6 +1769,27 @@ fn change_say(result: &BayResult) -> Option<String> {
         });
     }
     Reason::from_code(outcome).map(|reason| format!("{id}: {}", reason.say(None)))
+}
+
+/// G603 (a fleet finding, 2026-10-31: status of a change whose operation a fault stopped read
+/// "Done; nothing else is needed."): the sentence of an operation with no outcome. A stopped one
+/// says the fault's own words, from its receipt (`fault`), and what to do.
+fn no_outcome_say(id: &str, op: &Value) -> String {
+    let fault = &op["fault"];
+    match op["state"].as_str() {
+        Some("blocked" | "failed") => match (fault["why"].as_str(), fault["recovery"].as_str()) {
+            (Some(why), Some(recovery)) => {
+                format!("{id} stopped and is not in line: {why}. To go on, {recovery}.")
+            }
+            _ => format!(
+                "{id} stopped and is not in line; its receipt {} says why.",
+                op["receipt"].as_str().unwrap_or("record")
+            ),
+        },
+        Some("no_effect") => format!("{id} added nothing: its work is already on main."),
+        Some(state) => format!("{id} is not on main yet; its last operation is {state}."),
+        None => format!("{id} is not on main yet."),
+    }
 }
 
 /// G601: the sentence of a `bay update` result (`crate::update`'s plan detail): the version this
@@ -2048,6 +2071,26 @@ mod tests {
         let refused = read(json!({"change": "abcd1234", "state": "ready",
             "operation": {"lease": null, "outcome": Reason::CheckFailed.code()}}));
         assert!(!refused.contains("nothing else is needed"), "{refused}");
+        // G603: an operation a fault stopped has no outcome; its receipt's words say why.
+        let why = "it must raise revision above 70; it has 70";
+        let stopped = read(json!({"change": "abcd1234", "state": "ready",
+            "operation": {"lease": null, "outcome": null, "state": "blocked", "receipt": "r-1",
+                "fault": {"why": why, "recovery": "fix the cause, then run bay merge again"}}}));
+        assert_eq!(
+            stopped,
+            format!(
+                "abcd1234 stopped and is not in line: {why}. To go on, fix the cause, then run bay merge again."
+            )
+        );
+        let unexplained = read(json!({"change": "abcd1234", "state": "ready",
+            "operation": {"lease": null, "outcome": null, "state": "failed", "receipt": "r-1"}}));
+        assert!(
+            unexplained.contains("receipt r-1 says why"),
+            "{unexplained}"
+        );
+        let moving = read(json!({"change": "abcd1234", "state": "ready",
+            "operation": {"lease": null, "outcome": null, "state": "checked"}}));
+        assert!(moving.contains("not on main yet"), "{moving}");
     }
 
     /// G601: `bay update` names the version it replaced and the one it installed, and says a pin
