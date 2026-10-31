@@ -33,6 +33,7 @@ use crate::receipts::{self, Receipt};
 use crate::repo::Repo;
 use crate::result::{BayResult, Freshness, Reason};
 use crate::runtime::Confirmed;
+use crate::sweep::{self, Swept};
 use crate::view;
 
 #[must_use]
@@ -133,6 +134,13 @@ fn listed(repo: &Repo, chain: &Chain, named: Option<String>) -> Result<Vec<Strin
         refresh_chains(repo, chain, &ids)?;
         return Ok(ids);
     }
+    let ids = live_ids(repo, chain)?;
+    let _ = repo.remote_chains(&ids);
+    Ok(ids)
+}
+
+/// Every change this repository holds that has not ended.
+fn live_ids(repo: &Repo, chain: &Chain) -> Result<Vec<String>, String> {
     // W5: every chain's record in one batch (G200b); a chain it cannot read stays listed.
     let ended_here: std::collections::BTreeSet<String> = chain
         .read_all()
@@ -141,15 +149,58 @@ fn listed(repo: &Repo, chain: &Chain, named: Option<String>) -> Result<Vec<Strin
         .filter(|held| ended(held.record.state))
         .map(|held| held.id)
         .collect();
-    let ids: Vec<String> = repo
+    Ok(repo
         .git
         .run(&["for-each-ref", "--format=%(refname)", CHANGES_PREFIX])
         .map_err(|error| error.message())?
         .lines()
         .map(|name| name.trim_start_matches(CHANGES_PREFIX).to_owned())
         .filter(|id| !ended_here.contains(id))
-        .collect();
-    let _ = repo.remote_chains(&ids);
+        .collect())
+}
+
+/// G615: [`listed`] from what a sweep found: each chain of the changes the read names moves by
+/// [`Repo::remote_chain`]'s rule, and only a chain that moved is touched. A fast-forward, and a
+/// chain this store lacks, move by compare-and-swap in one transaction; a chain the remote's is
+/// not a fast-forward of (local work ahead, a chain apart, a retention cut) is settled as one git
+/// refused; one the remote lacks is kept.
+fn settle_listed(
+    repo: &Repo,
+    chain: &Chain,
+    named: Option<String>,
+    swept: &Swept,
+) -> Result<Vec<String>, String> {
+    let is_named = named.is_some();
+    let ids = match named {
+        Some(id) => vec![id],
+        None => live_ids(repo, chain)?,
+    };
+    let mut updates = Vec::new();
+    for id in &ids {
+        let name = change_ref(id);
+        let Some(found) = swept.moves.get(&name) else {
+            continue;
+        };
+        match (found.flag, found.new.as_deref()) {
+            (' ' | '*', Some(_)) => updates.push((name, found.old.clone(), found.new.clone())),
+            ('+', Some(new)) => {
+                let _ = repo.settle_chain(id, new);
+            }
+            _ => {}
+        }
+    }
+    sweep::apply(&repo.git, &updates);
+    // A change named here but not local is read from the remote, which must hold it.
+    if let [id] = ids.as_slice()
+        && is_named
+        && !swept.moves.contains_key(&change_ref(id))
+        && chain.head(id).map_err(|error| error.message())?.is_none()
+    {
+        return Err(format!(
+            "change {id} is not here or on the remote: the remote holds no {}",
+            change_ref(id)
+        ));
+    }
     Ok(ids)
 }
 
@@ -271,10 +322,158 @@ fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
     })
 }
 
+/// G615: [`fetch_all`] in one round trip: the remote is asked once ([`crate::sweep`]) for every
+/// namespace a status read judges, with the config at the trunk this store held, and each
+/// namespace takes only the moves its own fetch takes:
+///
+/// - the trunk, forced ([`Repo::fetch_trunk`]); the config is read again at a tip it moved to;
+/// - every executor's log, forced, but this executor's own only forward (A10,
+///   [`crate::log::fetch`]);
+/// - the fleet refs and the locks, forced and pruned ([`crate::fleet::fetch`]);
+/// - every other writer's evidence notes, forced and never pruned ([`Repo::fetch_evidence`]);
+/// - each target's ref, its copy removed when the remote lacks it ([`crate::target::fetch`]),
+///   and fetched as before when the config the trunk moved to names other targets;
+/// - the chains of the changes the read names ([`settle_listed`]), after the receipts' sync,
+///   which reads the remote's chains and land requests from the same sweep and writes none.
+///
+/// This actor's talks are then accepted beside the chains (G612), and the lane refs (NEW-4)
+/// fetched as before. `None` when a sweep cannot serve the read, which then fetches as before
+/// ([`fetch_all`]): no config at the trunk this store holds, a partial clone (a sweep's mixed
+/// fetch carries no filter, `Git::run`), or a sweep that fails (offline, or a git that cannot).
+fn fetch_swept(
+    dir: &Path,
+    change: Option<&str>,
+) -> Option<Result<(Repo, Refreshed), Box<BayResult>>> {
+    let first = Repo::open_with(dir, crate::repo::Fetch::Never).ok()?;
+    if first.git.is_partial() {
+        return None;
+    }
+    let tracking = first.trunk_tracking_ref();
+    let targets: Vec<(String, String)> = first
+        .config
+        .targets
+        .iter()
+        .map(|target| (target.reference(), crate::target::local_ref(&target.name)))
+        .collect();
+    let held = first.git.ref_target(&tracking).ok()?;
+    let mut refspecs = vec![format!("+refs/heads/{}:{tracking}", first.trunk())];
+    for prefix in [
+        CHANGES_PREFIX,
+        crate::names::REQUESTS,
+        crate::log::LOG_PREFIX,
+        evidence::EVIDENCE_PREFIX,
+    ] {
+        refspecs.push(format!("+{prefix}*:{prefix}*"));
+    }
+    refspecs.extend(crate::fleet::refspecs());
+    // Each target is asked by its name as a prefix, so one the remote no longer holds fails no
+    // sweep: it is named as a prune of its copy. A ref that shares the prefix is never taken.
+    refspecs.extend(
+        targets
+            .iter()
+            .map(|(reference, local)| format!("+{reference}*:{local}*")),
+    );
+    let swept = sweep::sweep(&first.git, first.remote(), &refspecs).ok()?;
+    let trunk = swept
+        .remote_of(&tracking, held.as_deref())
+        .map(str::to_owned)?;
+    Some(settle_swept(dir, change, first, &swept, &targets, trunk))
+}
+
+/// The local half of [`fetch_swept`]: the moves `swept` found, each namespace by its rule.
+fn settle_swept(
+    dir: &Path,
+    change: Option<&str>,
+    first: Repo,
+    swept: &Swept,
+    targets: &[(String, String)],
+    trunk: String,
+) -> Result<(Repo, Refreshed), Box<BayResult>> {
+    let tracking = first.trunk_tracking_ref();
+    let keys = crate::signing::Keys::load(&first.git);
+    let own_log = crate::log::log_ref(&keys.executor_name);
+    let own_notes: Vec<String> = keys
+        .own_names()
+        .into_iter()
+        .map(evidence::notes_ref)
+        .collect();
+    let mut updates = swept.taken(&tracking, |name, _| name == tracking);
+    updates.extend(swept.taken(crate::log::LOG_PREFIX, |name, found| {
+        if name == own_log {
+            matches!(found.flag, ' ' | '*')
+        } else {
+            found.flag != '-'
+        }
+    }));
+    for prefix in [
+        crate::fleet::FLEET_PREFIX,
+        crate::fleet::FLEET_EXECUTOR_PREFIX,
+        crate::names::LOCKS,
+    ] {
+        updates.extend(swept.taken(prefix, |_, _| true));
+    }
+    updates.extend(swept.taken(evidence::EVIDENCE_PREFIX, |name, found| {
+        found.flag != '-' && !own_notes.iter().any(|own| own == name)
+    }));
+    for (_, local) in targets {
+        updates.extend(swept.taken(local, |name, _| name == local));
+    }
+    sweep::apply(&first.git, &updates);
+    crate::coord::fetched(&first.work_root);
+    crate::fleet::record(&first, &swept.at);
+    let repo = if swept.moves.contains_key(&tracking) {
+        Repo::open_with(dir, crate::repo::Fetch::Never)
+            .map_err(|error| Box::new(error.into_result()))?
+    } else {
+        first
+    };
+    repo.swept_evidence();
+    let read_targets: Vec<(String, String)> = repo
+        .config
+        .targets
+        .iter()
+        .map(|target| (target.reference(), crate::target::local_ref(&target.name)))
+        .collect();
+    let targets_fetched = read_targets == targets || crate::target::fetch(&repo);
+    let named = change.map(str::to_owned).or_else(|| repo.view_change(dir));
+    let (ids, talk_accept) = std::thread::scope(|scope| {
+        // § 11c: a fetching command on the recipient's machine accepts and acks its talks.
+        let talks = scope.spawn(|| crate::talk::poll::command(&repo, crate::live::unix_now()));
+        scope.spawn(|| crate::lane::fetch(&repo));
+        let _ = receipts::sync_seen(&repo, Some(swept));
+        let ids = settle_listed(&repo, &Chain::new(&repo.git), named, swept);
+        (
+            ids,
+            talks
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+        )
+    });
+    let refreshed = Refreshed {
+        trunk,
+        fetched_at: Some(swept.at.clone()),
+        ids: ids.map_err(|message| Box::new(BayResult::failed(message)))?,
+        targets: targets_fetched,
+        talk_accept,
+    };
+    Ok((repo, refreshed))
+}
+
 fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
-    let repo = match Repo::open_fetched(dir) {
-        Ok(repo) => repo,
-        Err(error) => return Ok(error.into_result()),
+    let (repo, refreshed) = match fetch_swept(dir, change) {
+        Some(Ok(swept)) => swept,
+        Some(Err(refused)) => return Ok(*refused),
+        None => {
+            let repo = match Repo::open_fetched(dir) {
+                Ok(repo) => repo,
+                Err(error) => return Ok(error.into_result()),
+            };
+            let refreshed = fetch_all(
+                &repo,
+                change.map(str::to_owned).or_else(|| repo.view_change(dir)),
+            )?;
+            (repo, refreshed)
+        }
     };
     let Refreshed {
         trunk,
@@ -282,10 +481,7 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
         ids,
         targets: targets_fetched,
         talk_accept,
-    } = fetch_all(
-        &repo,
-        change.map(str::to_owned).or_else(|| repo.view_change(dir)),
-    )?;
+    } = refreshed;
     let pending = receipts::pending(&repo);
     let chain = Chain::new(&repo.git);
     // The runtime adapter is asked only for a change this read names: a listing of every

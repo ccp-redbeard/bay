@@ -177,11 +177,37 @@ pub fn fetched_age_s(repo: &Repo) -> Option<u64> {
 /// failed fetch keeps the earlier record, whose age `--all` shows. A summary commit the
 /// earlier record already held keeps the time it was first fetched.
 pub fn fetch(repo: &Repo) {
+    let at = now_rfc3339();
+    // One fetch and one listing for both namespaces (G67 adds no spawn).
+    let mut args = vec!["fetch", "-q", "--no-tags", "--prune", repo.remote()];
+    let refspecs = refspecs();
+    args.extend(refspecs.iter().map(String::as_str));
+    if repo.git.run(&args).is_ok() {
+        record(repo, &at);
+    }
+}
+
+/// The refspecs of [`fetch`]: the live refs, the executors' presence, and (BACKLOG 61 b) the
+/// locks held now, as the remote holds them.
+#[must_use]
+pub fn refspecs() -> [String; 3] {
+    [
+        format!("+{}*:{FLEET_PREFIX}*", live::LIVE_PREFIX),
+        format!(
+            "+{}*:{FLEET_EXECUTOR_PREFIX}*",
+            crate::presence::PRESENCE_PREFIX
+        ),
+        format!("+{0}*:{0}*", crate::names::LOCKS),
+    ]
+}
+
+/// Records the fleet refs this store holds after a fetch of them that began `at`, for
+/// [`recorded`].
+pub fn record(repo: &Repo, at: &str) {
     let Ok(Some(url)) = repo.git.remote_url(repo.remote()) else {
         return;
     };
-    let at = now_rfc3339();
-    let Some(began) = unix_of(&at) else {
+    let Some(began) = unix_of(at) else {
         return;
     };
     let (earlier, earlier_executors) = recorded(repo, repo.remote(), &url)
@@ -189,30 +215,7 @@ pub fn fetch(repo: &Repo) {
         .flatten()
         .map(|fetched| (fetched.tips, fetched.executors))
         .unwrap_or_default();
-    // One fetch and one listing for both namespaces (G67 adds no spawn).
-    let refspec = format!("+{}*:{FLEET_PREFIX}*", live::LIVE_PREFIX);
-    let presences = format!(
-        "+{}*:{FLEET_EXECUTOR_PREFIX}*",
-        crate::presence::PRESENCE_PREFIX
-    );
-    // BACKLOG 61 b: the locks held now come in the same fetch, as the remote holds them.
-    let locks = format!("+{0}*:{0}*", crate::names::LOCKS);
     let git = &repo.git;
-    if git
-        .run(&[
-            "fetch",
-            "-q",
-            "--no-tags",
-            "--prune",
-            repo.remote(),
-            &refspec,
-            &presences,
-            &locks,
-        ])
-        .is_err()
-    {
-        return;
-    }
     let Ok(listed) = git.run(&[
         "for-each-ref",
         "--format=%(refname) %(objectname)",

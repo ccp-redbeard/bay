@@ -635,6 +635,12 @@ impl Git {
         )
     }
 
+    /// Whether this store is a partial clone ([`Git::promisor_remote`]).
+    #[must_use]
+    pub fn is_partial(&self) -> bool {
+        self.promisor_remote().is_some()
+    }
+
     /// The remote a partial clone fetches its absent objects from, from this handle's config
     /// snapshot: `extensions.partialClone`, else the first remote whose `remote.<name>.promisor`
     /// is true. `None` in a full clone, or for a name Git would read as an option.

@@ -8,6 +8,7 @@
 //! machine that dies before the sync loses the file, and `status` then shows the outcome as
 //! missing, never as success.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -18,6 +19,7 @@ use crate::clock::now_rfc3339;
 use crate::ids::new_change_id;
 use crate::repo::Repo;
 use crate::result::BayResult;
+use crate::sweep::Swept;
 
 pub const RECEIPT_SCHEMA: &str = "bay.receipt/1";
 
@@ -118,7 +120,14 @@ pub fn pending(repo: &Repo) -> Vec<(PathBuf, Receipt)> {
 /// chain cannot be updated or pushed stays pending. Returns how many were synchronized.
 #[must_use]
 pub fn sync(repo: &Repo) -> usize {
-    let _ = sync_chains(repo);
+    sync_seen(repo, None)
+}
+
+/// [`sync`], with the remote's chains and land requests as `swept` read them (G615), so it asks
+/// the remote for no listing of its own.
+#[must_use]
+pub fn sync_seen(repo: &Repo, swept: Option<&Swept>) -> usize {
+    let _ = sync_chains_seen(repo, swept);
     // N-21: receipts are signed only where the registry signs everything.
     let signing = crate::registry::Registry::current(&repo.git)
         .ok()
@@ -187,6 +196,35 @@ pub fn sync(repo: &Repo) -> usize {
 /// the requests ref does not name is one the trunk hook never lets land.
 #[must_use]
 pub fn sync_chains(repo: &Repo) -> usize {
+    sync_chains_seen(repo, None)
+}
+
+/// The remote's chain and request refs: as one listing of them read them, or as a sweep did.
+enum Remote<'a> {
+    Listed(HashMap<&'a str, &'a str>),
+    Swept(&'a Swept),
+}
+
+impl<'a> Remote<'a> {
+    /// The remote's object id of ref `name`, where this store's is `local`.
+    fn of(&self, name: &str, local: Option<&'a str>) -> Option<&'a str> {
+        match self {
+            Self::Listed(listed) => listed.get(name).copied(),
+            Self::Swept(swept) => swept.remote_of(name, local),
+        }
+    }
+
+    /// Whether the remote's `name` is known to be a fast-forward of this store's.
+    fn ahead(&self, name: &str) -> bool {
+        match self {
+            Self::Swept(swept) => swept.moves.get(name).is_some_and(|found| found.flag == ' '),
+            Self::Listed(_) => false,
+        }
+    }
+}
+
+/// [`sync_chains`] against the remote `swept` read, or against a listing of its own.
+fn sync_chains_seen(repo: &Repo, swept: Option<&Swept>) -> usize {
     let changes = crate::change::CHANGES_PREFIX;
     let requests = crate::names::REQUESTS;
     let Ok(local) = repo.git.run(&[
@@ -197,14 +235,24 @@ pub fn sync_chains(repo: &Repo) -> usize {
     ]) else {
         return 0;
     };
-    let Ok(remote) = repo.git.run(&[
-        "ls-remote",
-        repo.remote(),
-        &format!("{changes}*"),
-        &format!("{requests}*"),
-    ]) else {
-        return 0;
+    let listing;
+    let remote = if let Some(swept) = swept {
+        Remote::Swept(swept)
+    } else {
+        let Ok(listed) = repo.git.run(&[
+            "ls-remote",
+            repo.remote(),
+            &format!("{changes}*"),
+            &format!("{requests}*"),
+        ]) else {
+            return 0;
+        };
+        listing = listed;
+        Remote::Listed(by_name(&listing, '\t'))
     };
+    // G615: each ref looked up by name, never by a scan of every line (about 3,000 chains
+    // against a listing of 5,800 refs cost about a second a status).
+    let held = by_name(&local, ' ');
     let mut pushed = 0;
     for line in local.lines() {
         let Some((oid, name)) = line.split_once(' ') else {
@@ -219,20 +267,21 @@ pub fn sync_chains(repo: &Repo) -> usize {
         if !crate::ids::is_change_id(id) {
             continue;
         }
-        let on_remote = listed(&remote, '\t', name);
+        let on_remote = remote.of(name, Some(oid));
         if on_remote == Some(oid) {
             continue;
         }
         // W5: only work the remote lacks. A copy the remote moved past (its tip not under
         // the local one, or not even here) could only be refused.
         if let Some(tip) = on_remote
-            && !repo.git.is_ancestor(tip, oid).unwrap_or(false)
+            && (remote.ahead(name) || !repo.git.is_ancestor(tip, oid).unwrap_or(false))
         {
             continue;
         }
         let request_ref = format!("{requests}{id}");
-        let carried = listed(&local, ' ', &request_ref)
-            .filter(|request| listed(&remote, '\t', &request_ref) != Some(*request))
+        let request = held.get(request_ref.as_str()).copied();
+        let carried = request
+            .filter(|request| remote.of(&request_ref, Some(request)) != Some(*request))
             .filter(|request| latest_request(repo, oid).as_deref() == Some(*request))
             .map(|request| format!("+{request}:{request_ref}"));
         let chain = format!("{oid}:{name}");
@@ -251,13 +300,13 @@ pub fn sync_chains(repo: &Repo) -> usize {
     pushed
 }
 
-/// The object id `listing` (lines of an id, `separator`, a ref name) gives ref `name`.
-fn listed<'a>(listing: &'a str, separator: char, name: &str) -> Option<&'a str> {
-    listing.lines().find_map(|line| {
-        line.split_once(separator)
-            .filter(|(_, ref_name)| *ref_name == name)
-            .map(|(oid, _)| oid)
-    })
+/// Each ref of `listing` (lines of an object id, `separator`, a ref name), by name.
+fn by_name(listing: &str, separator: char) -> HashMap<&str, &str> {
+    listing
+        .lines()
+        .filter_map(|line| line.split_once(separator))
+        .map(|(oid, name)| (name, oid))
+        .collect()
 }
 
 /// The latest land request the chain state `head` records, if it records one.

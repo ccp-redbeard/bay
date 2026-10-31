@@ -79,6 +79,7 @@ pub mod skill;
 pub mod start;
 pub mod status;
 pub mod stranded;
+pub mod sweep;
 pub mod talk;
 pub mod target;
 pub mod throughput;

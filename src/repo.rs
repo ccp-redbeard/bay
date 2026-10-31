@@ -687,6 +687,12 @@ impl Repo {
         }
     }
 
+    /// G615: a sweep brought the evidence notes, so [`Repo::fetch_evidence_once`] fetches none.
+    pub(crate) fn swept_evidence(&self) {
+        self.evidence_fetched
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Fetches `refs` (full ref names) from the remote into the same names. A ref the
     /// remote lacks is an error.
     ///
@@ -837,7 +843,7 @@ impl Repo {
 
     /// Moves this store's chain ref of `change` to the remote's head `remote` as
     /// [`Repo::remote_chain`] does: forward only, a retention cut taken, local work kept.
-    fn settle_chain(&self, change: &str, remote: &str) -> Result<(), GitError> {
+    pub(crate) fn settle_chain(&self, change: &str, remote: &str) -> Result<(), GitError> {
         let git = &self.git;
         let name = crate::change::change_ref(change);
         let remote = remote.to_owned();
