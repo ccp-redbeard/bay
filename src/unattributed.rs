@@ -124,6 +124,9 @@ pub fn scan(git: &Git, trunk: &str) -> Result<Value, String> {
         (!adoption.is_empty()).then_some(adoption.as_str()),
         "%ct%x1f%ce%x1f%s",
     )?;
+    if signatures {
+        read_signing(git, &line);
+    }
     let (lanes, tips, _) = crate::lane::tips_at(git, trunk)?;
     let mut landings = Vec::new();
     let mut off_first_parent: u64 = 0;
@@ -199,6 +202,18 @@ pub fn scan(git: &Git, trunk: &str) -> Result<Value, String> {
         scanned["lane_leaks"] = json!(lane_leaks);
     }
     Ok(scanned)
+}
+
+/// G610: the signing at the parent of each landing on `line` that names no registry version,
+/// read in one batch and kept, so each publication check of [`scan`] finds its landing's.
+fn read_signing(git: &Git, line: &crate::trunkline::Line) {
+    let unnamed: Vec<&str> = line
+        .entries
+        .iter()
+        .filter(|entry| entry.via.is_none() && matches!(entry.registry_id.as_str(), "" | "none"))
+        .map(|entry| entry.commit.as_str())
+        .collect();
+    let _ = crate::registry::landings_signed(git, &unnamed);
 }
 
 /// G315: `by_writer`, the landings around bay per committer, the most first (ties by name).

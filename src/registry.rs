@@ -789,6 +789,19 @@ pub fn landing_signed(git: &Git, commit: &str) -> bool {
     )
 }
 
+/// [`landing_signed`] of each of `commits`, in their order, the policies at their parents read
+/// in one batch and kept for the process (G610): a reader that then asks [`landing_signed`] of
+/// each, as [`crate::unattributed::scan`] does through each landing's publication check, finds
+/// it kept.
+#[must_use]
+pub fn landings_signed(git: &Git, commits: &[&str]) -> Vec<bool> {
+    let parents: Vec<String> = commits.iter().map(|commit| format!("{commit}^1")).collect();
+    crate::policy::signing_stated_many(git, &parents)
+        .into_iter()
+        .map(|read| !matches!(read, Ok(Signing::Approvals)))
+        .collect()
+}
+
 /// Writes `text` at `path` unless a file is there: a file of a registry version never changes,
 /// so the first writer's is every writer's. Each writer writes its own temporary file and renames
 /// it into place, so two hook processes that judge pushes at once never take each other's

@@ -280,20 +280,79 @@ pub fn signing_at(git: &Git, commit: &str) -> Result<Signing, String> {
 ///
 /// A git fault, or a policy file the tree names whose blob cannot be read (G104b).
 pub fn signing_stated_at(git: &Git, commit: &str) -> Result<Signing, String> {
-    // Read once per process for a fixed commit, kept only when the file was there: no policy
-    // may be a commit not fetched yet.
-    crate::memo::at(
-        "signing",
-        git,
-        commit,
-        |(read, present): &(Result<Signing, String>, bool)| read.is_ok() && *present,
-        || match git.file_at(commit, POLICY_PATH) {
+    crate::memo::at(SIGNING, git, commit, signing_kept, || {
+        match git.file_at(commit, POLICY_PATH) {
             Ok(Some(text)) => (Ok(signing_in(&text)), true),
             Ok(None) => (Ok(Signing::All), false),
             Err(error) => (Err(error.message()), false),
-        },
-    )
+        }
+    })
     .0
+}
+
+/// The memo kind of [`signing_stated_at`].
+const SIGNING: &str = "signing";
+
+/// Whether a signing read is kept for the process: only when the file was there, as no policy
+/// may be a commit not fetched yet.
+fn signing_kept((read, present): &(Result<Signing, String>, bool)) -> bool {
+    read.is_ok() && *present
+}
+
+/// [`signing_stated_at`] of each of `commits`, in their order, each kept for the process as
+/// that read keeps it. One `cat-file --batch-check` names each commit's policy file and one
+/// `cat-file --batch` reads each distinct file once, so a text many commits hold is parsed
+/// once (a fleet finding, 2026-10-31: a status read the 58 KB policy at each of 49 landings'
+/// parents apart, about 2 s). A commit with no policy file, or one the batch cannot read, is
+/// read alone.
+#[must_use]
+pub fn signing_stated_many(git: &Git, commits: &[String]) -> Vec<Result<Signing, String>> {
+    let one_by_one = || {
+        commits
+            .iter()
+            .map(|commit| signing_stated_at(git, commit))
+            .collect()
+    };
+    if commits.len() < 2 {
+        return one_by_one();
+    }
+    let files: Vec<String> = commits
+        .iter()
+        .map(|commit| format!("{commit}:{POLICY_PATH}"))
+        .collect();
+    let Ok(blobs) = git.object_ids(&files) else {
+        return one_by_one();
+    };
+    let distinct: Vec<String> = blobs
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let Ok(texts) = git.objects(&distinct) else {
+        return one_by_one();
+    };
+    let stated: HashMap<&str, Signing> = distinct
+        .iter()
+        .zip(texts)
+        .filter_map(|(blob, text)| {
+            let text = String::from_utf8(text?).ok()?;
+            Some((blob.as_str(), signing_in(&text)))
+        })
+        .collect();
+    commits
+        .iter()
+        .zip(&blobs)
+        .map(
+            |(commit, blob)| match blob.as_deref().and_then(|blob| stated.get(blob)) {
+                Some(&signing) => {
+                    crate::memo::at(SIGNING, git, commit, signing_kept, || (Ok(signing), true)).0
+                }
+                None => signing_stated_at(git, commit),
+            },
+        )
+        .collect()
 }
 
 /// The mode policy text `text` states: [`Signing::Approvals`] only for `[policy] signing =
