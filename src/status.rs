@@ -722,6 +722,9 @@ fn local_read(
 pub fn sweep_child(dir: &Path, change: Option<&str>) {
     use std::io::Write as _;
     let answer = swept_answer(dir, change);
+    // The sweep fetched trunk: the coordination cache the `tool.before` hook reads is written
+    // before the answer, so a read that returns on it never leaves the hook an older cache.
+    crate::coord::after_command();
     let mut out = std::io::stdout().lock();
     // The read that started this sweep may have left: then no one reads the answer.
     let _ = writeln!(out, "{answer}").and_then(|()| out.flush());
