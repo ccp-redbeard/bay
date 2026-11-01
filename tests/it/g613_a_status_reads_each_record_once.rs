@@ -14,7 +14,7 @@ use serde_json::Value;
 use support::plain_talk::Plain;
 use support::result_json;
 
-const LISTING: &str = "--format=%(objectname) %(committerdate:unix) %(refname)";
+const LISTING: &str = "--format=%(objectname) %(refname)";
 
 /// One git spawn of bay's own process: its subcommand, its arguments, and when it ran (from,
 /// to) in microseconds since the Unix epoch.
