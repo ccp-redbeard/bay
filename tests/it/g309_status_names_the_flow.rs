@@ -14,7 +14,10 @@
 //!   (make it `.filter(|_| false)`: `landed` is 0);
 //! - `src/flow.rs` `flow`: `.filter(|(_, at)| at.saturating_add(CYCLE_DAYS * DAY_S) >= now)`
 //!   (make it `.filter(|_| false)`: `cycle_time_s` is null);
-//! - `src/status.rs` `run`: `"flow": flow,` (drop it: there is no `detail.flow`).
+//! - `src/status.rs` `run`: `"flow": flow,` (drop it: there is no `detail.flow`);
+//! - `src/flow.rs` `started`: read each line's commit before its time (`rev-list --timestamp`
+//!   prints the time first: no change has a start, each times from its head, and the cycle
+//!   time is 0).
 
 // Each case runs shell scripts (adapters), so these run on Unix only.
 #![cfg(unix)]
@@ -102,6 +105,8 @@ fn status_counts_live_by_actor_landings_cycle_time_and_the_oldest_live_change() 
     // One landing: both percentiles are its cycle time, well under the test's own run.
     assert_eq!(p50, p90, "{flow}");
     assert!(p50 < 600, "{flow}");
+    // The landing started over a second before it landed: its cycle time counts from its start.
+    assert!(p50 >= 1, "{flow}");
 
     assert_eq!(flow["oldest_live"]["change"], older.as_str(), "{flow}");
     assert!(flow["oldest_live"]["age_s"].as_u64().is_some(), "{flow}");
