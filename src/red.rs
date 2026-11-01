@@ -30,6 +30,10 @@
 //!   answers `tested` from the pass up to the newest failure, and it owns the red in place of
 //!   the newest failure. A post producer, or an executor with `[runner] bisect_post`
 //!   (`crate::bisect`), narrows the range by recording runs on its midpoints.
+//! - G622 (a fleet finding, 2026-10-31: a check's fix was named the culprit of the red it fixed):
+//!   a first failure that changed the check itself was judged with its first parent's check
+//!   (G91), so it is never the culprit ([`Suspect::judged_old`]); its row says the next landing
+//!   on the check's paths judges the new check.
 //! - BACKLOG 121: without a culprit, the owner (the newest failure) and the first failure are
 //!   only where the check was seen failing, never a proven cause; each red row's `say` says
 //!   which ([`Red::say`]).
@@ -183,6 +187,10 @@ pub struct Suspect {
     /// G584: with no pass found, the landing that added the check: its base policy lists other
     /// post checks and not this one. It owns the red, and the range ends at it.
     pub added: Option<Mark>,
+    /// G622: the landing right above the pass, when it changed the check itself. Its post run
+    /// judged it with its first parent's check (G91), so no run proves it the cause: it is not
+    /// the culprit, and the next landing on the check's paths judges the new check.
+    pub judged_old: Option<Mark>,
 }
 
 /// The landing that broke a red post check, as its evidence pins it: the newest pass is its
@@ -255,6 +263,7 @@ impl Suspect {
             "failing": self.failing.iter().map(Mark::to_json).collect::<Vec<_>>(),
             "searched": self.searched,
             "check_added": self.added.as_ref().map(Mark::to_json),
+            "judged_old": self.judged_old.as_ref().map(Mark::to_json),
         })
     }
 }
@@ -337,7 +346,8 @@ impl Red {
             ));
         }
         let said = self.seen(suspect);
-        if !self.changed_check {
+        // G622: the sentence of a landing judged with the old check already names the step.
+        if !self.changed_check || suspect.judged_old.as_ref() == Some(&suspect.newest_failed) {
             return Some(said);
         }
         Some(format!(
@@ -356,6 +366,25 @@ impl Red {
             return format!(
                 "{check}: {} broke it; the check passed on the merge before it and failed on it.",
                 culprit.mark.named()
+            );
+        }
+        if let Some(old) = &suspect.judged_old {
+            let next = if *old == suspect.newest_failed {
+                format!(
+                    "the next merge on the check's paths judges the new check: land one change \
+                     with --fixes {check}"
+                )
+            } else {
+                format!(
+                    "the new check failed at {}, so the cause is {} or a merge after it",
+                    suspect.newest_failed.named(),
+                    old.named()
+                )
+            };
+            return format!(
+                "{check}: {} changed the check itself, and its post run judged it with the check \
+                 of the merge before it, so it is named no cause; {next}.",
+                old.named()
             );
         }
         let seen = if suspect.failed == suspect.newest_failed {
@@ -1113,7 +1142,8 @@ fn decide<'a>(
 /// on the old lint, and three seats read the red as the fix not working): whether `landing`
 /// changed check `post`, its definition digest (the policy entry and each adapter file's
 /// object) differing from its first parent's. `false` when either policy cannot be read: it
-/// only adds a sentence to the red, and never decides one.
+/// adds a sentence to the red, and keeps a first failure from being named its culprit (G622),
+/// and never decides a red.
 fn changed_check(git: &Git, landing: &str, post: &crate::policy::ManifestEntry) -> bool {
     let digest = |commit: &str| {
         let policy = crate::policy::load_at(git, commit).ok().flatten()?;
@@ -1404,8 +1434,12 @@ impl<'a> Answers<'a> {
             .or(added.map(|added| added + 1))
             .unwrap_or(self.line.landings.len());
         // Landings are newest first: the pass right below the first failure is at `first + 1`.
-        let culprit = match passed {
-            Some(older) if older == first + 1 => Some(self.culprit(post, first, at, older)?),
+        let pinned = passed.filter(|older| *older == first + 1);
+        // G622: a first failure that changed the check was judged with the old one (G91).
+        let judged_old =
+            pinned.is_some() && changed_check(self.git, &self.line.landings[first].commit, post);
+        let culprit = match pinned {
+            Some(older) if !judged_old => Some(self.culprit(post, first, at, older)?),
             _ => None,
         };
         let owner = match (&culprit, added) {
@@ -1424,6 +1458,7 @@ impl<'a> Answers<'a> {
                 culprit,
                 searched: (passed.is_none() && added.is_none()).then_some(self.line.depth),
                 added: added.map(|added| Mark::of(&landings[added])),
+                judged_old: judged_old.then(|| Mark::of(&landings[first])),
             },
             owner,
         ))
