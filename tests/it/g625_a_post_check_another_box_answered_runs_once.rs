@@ -5,9 +5,10 @@
 //! producer last answered it.
 //!
 //! Guards to mutate: `elsewhere.contains(&id)` in `bisect::tips` (`src/bisect.rs`); drop it and
-//! the second box runs the check the first one answered. The `elsewhere` chain in
-//! `bisect::last_runs`; drop it and the second box's run on the next tip asks about every landing
-//! since the span's start, not since the first box's answer.
+//! the second box runs the check the first one answered. (The check has no `when_paths`, so the
+//! empty range since that answer still wakes it: only this guard stops the run.) The `elsewhere`
+//! chain in `bisect::last_runs`; drop it and the second box's run on the next tip asks about every
+//! landing since the span's start, not since the first box's answer.
 
 // Each case runs shell scripts (adapters), so these run on Unix only.
 #![cfg(unix)]
@@ -58,7 +59,7 @@ fn a_post_check_another_box_answered_on_the_tip_runs_once() {
     );
     for (path, text) in &mut files {
         if path == ".bay/policy.toml" {
-            text.push_str("\n[[check]]\nid = \"suite\"\nenvironment = \"local\"\nstage = \"post\"\ncommand = \"scripts/bay-check suite\"\nadapter = [\"scripts/bay-check\"]\nexpected_minimum = 1\ntimeout_s = 60\nwhen_paths = [\"src/**\"]\n");
+            text.push_str("\n[[check]]\nid = \"suite\"\nenvironment = \"local\"\nstage = \"post\"\ncommand = \"scripts/bay-check suite\"\nadapter = [\"scripts/bay-check\"]\nexpected_minimum = 1\ntimeout_s = 60\n");
         }
     }
     files.push((
