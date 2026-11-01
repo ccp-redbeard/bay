@@ -3118,8 +3118,8 @@ fn hook_timed_out(ctx: &mut Ctx, op_id: &str, revision: &str) -> Result<Option<B
 
 /// G81: the publishing push failed and trunk could not then be read, so whether C landed is
 /// unknown: the reply may have been lost after the remote moved trunk. bay acts on nothing and
-/// says so; the change's next land reads trunk again and finds the landing or builds anew,
-/// never a second publication (`DESIGN` § 9).
+/// says so; the next executor pass (G621, [`asked_again`]) or the change's next land reads trunk
+/// again and finds the landing or builds anew, never a second publication (`DESIGN` § 9).
 fn outcome_unknown(
     ctx: &mut Ctx,
     op_id: &str,
@@ -4275,10 +4275,16 @@ pub const UNKNOWN_RETRIES: usize = 3;
 /// its author's machine and printed no result, and the change waited for its author while its
 /// result said to wait), a check gave no clear answer on fewer than [`UNKNOWN_RETRIES`] of its
 /// candidates. Asked again, it is re-armed only once its condition changed (a moved trunk), so
-/// an unchanged one costs no run.
+/// an unchanged one costs no run. G621 (a fleet finding, 2026-10-31: an operation blocked
+/// `MERGE_OUTCOME_UNKNOWN` said bay would look again by itself, and no pass ever did): so is a
+/// publication whose outcome is unknown. The pass reads trunk first, so a candidate that landed
+/// is recorded landed, never published again; one that did not is re-armed and runs.
 #[must_use]
 pub fn asked_again(op: &Operation) -> bool {
     awaits_approval(op)
+        || (op.state == OpState::Blocked
+            && op.outcome.as_deref().and_then(Reason::from_code)
+                == Some(Reason::PublishOutcomeUnknown))
         || (op.state == OpState::Blocked
             && op.outcome.as_deref().and_then(Reason::from_code) == Some(Reason::CheckUnknown)
             && op

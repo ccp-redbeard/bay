@@ -1062,7 +1062,7 @@ impl Reason {
                 "Run `bay start <change>`; copy back any files `detail.unsaved_kept` names, then `bay merge`."
             }
             Self::PublishOutcomeUnknown => {
-                "Do nothing yet: bay reads main again. Never report it merged; `bay status <change>` shows the outcome."
+                "Do nothing yet: bay's next pass reads main, then records the landing or queues it. Never report it merged; `bay status <change>` shows the outcome."
             }
             Self::TrunkRed => {
                 "Wait for a fix to the red paths, or fix it with `bay start <intent> --fixes <check>`, naming `detail.red[].check` or the change in `detail.fixes`."
@@ -1253,7 +1253,7 @@ impl Reason {
                 "Not done yet: an earlier step was interrupted. Resume it before going on."
             }
             Self::PublishOutcomeUnknown => {
-                "Not known yet: bay cannot tell whether the change was added. It looks again; do not report it as saved."
+                "Not known yet: bay cannot tell whether the change was added. It looks again on its next pass; do not report it as saved."
             }
             Self::ChangeAlreadyLanded => {
                 "Nothing to add: this change is already on main. Start a new one for more edits."
