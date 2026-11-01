@@ -271,19 +271,10 @@ fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
                 && !taken.contains(&entry.environment)
         })
         .collect();
-    let (entries, ran) = in_turn(
-        git,
-        (registry.as_ref(), &writer, &policy),
-        &tip,
-        entries,
-        &reds,
-    );
-    let elsewhere = answered_elsewhere(
-        git,
-        (registry.as_ref(), &writer, &policy),
-        &entries,
-        (tip.as_str(), evidence::records_for(git, &tree)?),
-    )?;
+    let trust = (registry.as_ref(), &writer, &policy);
+    let (entries, ran) = in_turn(git, trust, &tip, entries, &reds);
+    let here = (tip.as_str(), evidence::records_for(git, &tree)?);
+    let elsewhere = answered_elsewhere(git, trust, &entries, here)?;
     let mut pieces: Vec<Piece> = Vec::new();
     for entry in entries {
         if pieces
