@@ -1103,7 +1103,7 @@ fn trace_input(cmd: &Command, started: Instant, code: Option<i32>, input: Option
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             bytes.hash(&mut hasher);
             serde_json::json!({
-                "lines": bytes.iter().filter(|&&byte| byte == b'\n').count(),
+                "lines": bytes.split(|&byte| byte == b'\n').count() - 1,
                 "hash": format!("{:016x}", hasher.finish()),
             })
         }),
