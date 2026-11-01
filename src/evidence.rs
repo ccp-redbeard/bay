@@ -464,13 +464,20 @@ pub fn records_for(git: &Git, tree: &str) -> Result<Vec<EvidenceRecord>, String>
 /// A git fault, or an unreadable note.
 pub fn records_for_many(git: &Git, trees: &[&str]) -> Result<Vec<Vec<EvidenceRecord>>, String> {
     let refs = git
-        .run(&["for-each-ref", "--format=%(refname)", EVIDENCE_PREFIX])
+        .run(&[
+            "for-each-ref",
+            "--format=%(refname) %(tree)",
+            EVIDENCE_PREFIX,
+        ])
         .map_err(|error| error.message())?;
-    let producers: Vec<&str> = refs
+    let (producers, notes_trees): (Vec<&str>, Vec<&str>) = refs
         .lines()
-        .map(|name| name.trim_start_matches(EVIDENCE_PREFIX))
-        .collect();
-    let notes = notes_on(git, &producers, trees)?;
+        .map(|line| {
+            let (name, tree) = line.split_once(' ').unwrap_or((line, ""));
+            (name.trim_start_matches(EVIDENCE_PREFIX), tree)
+        })
+        .unzip();
+    let notes = notes_on(git, &producers, &notes_trees, trees)?;
     Ok(trees
         .iter()
         .zip(notes)
@@ -501,14 +508,16 @@ pub fn records_for_many(git: &Git, trees: &[&str]) -> Result<Vec<Vec<EvidenceRec
 /// and so on; `git notes add` picks one by the number of notes), so each producer's note is
 /// asked at every fanout its notes tree has the directories for ([`fanouts`]) and found at the
 /// one its tree holds. A tree that is not a full object id is read producer by producer as
-/// before, and every tree is when `cat-file` cannot read the store.
+/// before, and every tree is when `cat-file` cannot read the store. `notes_trees` holds each
+/// producer's notes tree, in their order, for [`lost_note`].
 ///
 /// # Errors
 ///
-/// A git fault, or a note that is not a list of records.
+/// A git fault, a note that is not a list of records, or a note whose blob the store lacks.
 fn notes_on(
     git: &Git,
     producers: &[&str],
+    notes_trees: &[&str],
     trees: &[&str],
 ) -> Result<Vec<Vec<Vec<EvidenceRecord>>>, String> {
     let one_by_one = |tree: &str| -> Result<Vec<Vec<EvidenceRecord>>, String> {
@@ -554,30 +563,53 @@ fn notes_on(
         }
     };
     let mut replies = out.as_slice();
+    // found[tree][producer]: the note's blob, or `None` where `cat-file` found none; no row for
+    // a tree that is not a full object id.
+    let mut found: Vec<Option<Vec<Option<&[u8]>>>> = Vec::with_capacity(trees.len());
+    for (tree, fanouts) in trees.iter().zip(&fanouts) {
+        if !crate::compact::is_object_id(tree) {
+            found.push(None);
+            continue;
+        }
+        let mut row = Vec::with_capacity(producers.len());
+        for (producer, &fanout) in producers.iter().zip(fanouts) {
+            let notes = notes_ref(producer);
+            let mut blob = None;
+            for _ in 0..=fanout {
+                if let Some(reply) = next_reply(&mut replies, &notes, tree)? {
+                    if blob.is_some() {
+                        return Err(format!("{notes} on {tree}: more than one note"));
+                    }
+                    blob = Some(reply);
+                }
+            }
+            row.push(blob);
+        }
+        found.push(Some(row));
+    }
+    match lost_note(git, producers, notes_trees, trees, &fanouts, &found) {
+        Ok(Some(lost)) => return Err(lost),
+        Ok(None) => {}
+        Err(GitError::Failed { .. }) => {
+            return trees.iter().map(|tree| one_by_one(tree)).collect();
+        }
+        Err(error) => return Err(error.message()),
+    }
     trees
         .iter()
-        .zip(&fanouts)
-        .map(|(tree, fanouts)| {
-            if !crate::compact::is_object_id(tree) {
+        .zip(found)
+        .map(|(tree, row)| {
+            let Some(row) = row else {
                 return one_by_one(tree);
-            }
+            };
             producers
                 .iter()
-                .zip(fanouts)
-                .map(|(producer, &fanout)| {
-                    let notes = notes_ref(producer);
-                    let mut found = None;
-                    for _ in 0..=fanout {
-                        if let Some(blob) = next_reply(&mut replies, &notes, tree)? {
-                            if found.is_some() {
-                                return Err(format!("{notes} on {tree}: more than one note"));
-                            }
-                            found = Some(blob);
-                        }
-                    }
-                    let Some(blob) = found else {
+                .zip(row)
+                .map(|(producer, blob)| {
+                    let Some(blob) = blob else {
                         return Ok(Vec::new());
                     };
+                    let notes = notes_ref(producer);
                     let text = std::str::from_utf8(blob)
                         .map_err(|_| format!("{notes} on {tree}: the note is not utf-8"))?;
                     serde_json::from_str(text)
@@ -586,6 +618,95 @@ fn notes_on(
                 .collect()
         })
         .collect()
+}
+
+/// G623 (BACKLOG 174): `cat-file --batch` answers `missing` both where a notes tree holds no
+/// note and where it holds one whose blob the store lacks, so a lost note read as "no
+/// records" on the batch path, where `notes show` says `bad object` (G104b). Each producer
+/// `cat-file` found no note for is asked again with one `git diff-tree -r --stdin` of its notes
+/// tree against the empty tree, at the note paths of `found`'s empty places: that lists an
+/// entry and its blob id from the trees alone, never reading the blob. The message of the first
+/// note it lists, or `None` when it lists none.
+///
+/// # Errors
+///
+/// A git fault.
+fn lost_note(
+    git: &Git,
+    producers: &[&str],
+    notes_trees: &[&str],
+    trees: &[&str],
+    fanouts: &[Vec<usize>],
+    found: &[Option<Vec<Option<&[u8]>>>],
+) -> Result<Option<String>, GitError> {
+    let empty: Vec<(usize, usize)> = found
+        .iter()
+        .enumerate()
+        .filter_map(|(at, row)| row.as_ref().map(|row| (at, row)))
+        .flat_map(|(at, row)| {
+            row.iter()
+                .enumerate()
+                .filter(|(_, blob)| blob.is_none())
+                .map(move |(producer, _)| (at, producer))
+        })
+        .filter(|&(_, producer)| crate::compact::is_object_id(notes_trees[producer]))
+        .collect();
+    if empty.is_empty() {
+        return Ok(None);
+    }
+    let mut asked: Vec<usize> = empty.iter().map(|&(_, producer)| producer).collect();
+    asked.sort_unstable();
+    asked.dedup();
+    // A note path names one subject tree: its fanout directories and the rest of its id.
+    let mut subjects: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for &(at, producer) in &empty {
+        for levels in 0..=fanouts[at][producer] {
+            subjects.insert(note_path(trees[at], levels), at);
+        }
+    }
+    let mut input = String::new();
+    for &producer in &asked {
+        let notes_tree = notes_trees[producer];
+        // Git knows the empty tree of either hash without the store holding it.
+        let empty_tree = if notes_tree.len() == 64 {
+            "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"
+        } else {
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        };
+        input.push_str(empty_tree);
+        input.push(' ');
+        input.push_str(notes_tree);
+        input.push('\n');
+    }
+    let mut args = vec!["diff-tree", "-r", "--stdin", "--"];
+    args.extend(subjects.keys().map(String::as_str));
+    let out = git.run_bytes(&args, &[], Some(input.as_bytes()))?;
+    // Each input line comes back as its own line, then one `:<modes> <ids> A\t<path>` line for
+    // each entry the notes tree holds at a path asked.
+    let mut lost = std::collections::BTreeMap::new();
+    let mut seen: usize = 0;
+    for line in String::from_utf8_lossy(&out).lines() {
+        let Some(entry) = line.strip_prefix(':') else {
+            seen += 1;
+            continue;
+        };
+        let producer = seen.checked_sub(1).and_then(|at| asked.get(at));
+        let (fields, path) = entry.split_once('\t').unwrap_or((entry, ""));
+        if let (Some(&producer), Some(&at), Some(blob)) =
+            (producer, subjects.get(path), fields.split(' ').nth(3))
+        {
+            lost.insert((at, producer), blob.to_owned());
+        }
+    }
+    Ok(empty.iter().find_map(|&(at, producer)| {
+        lost.get(&(at, producer)).map(|blob| {
+            format!(
+                "{} on {}: bad object {blob}: the note's blob is not in the store",
+                notes_ref(producers[producer]),
+                trees[at]
+            )
+        })
+    }))
 }
 
 /// G607 (a fleet finding, 2026-10-31: a records read asked each producer's note at all 20
