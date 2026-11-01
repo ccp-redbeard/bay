@@ -46,11 +46,12 @@ fn a_post_check_another_box_answered_on_the_tip_runs_once() {
     let remote = test_box.path().join("repo-remote.git");
     let runs = test_box.path().join("runs");
     // Each run of the post check `suite` logs the paths its request names as changed.
-    let log = test_box.relay(&format!("echo \"suite $changed\" >> '{}'", runs.display()));
+    let log = test_box.relay(&format!(
+        "changed=$(printf '%s' \"$req\" | sed -n 's/.*\"changed_paths\":\\[\\([^]]*\\)\\].*/\\1/p')\necho \"suite $changed\" >> '{}'",
+        runs.display()
+    ));
     let mut files = check_files(
-        &format!(
-            "changed=$(printf '%s' \"$req\" | sed -n 's/.*\"changed_paths\":\\[\\([^]]*\\)\\].*/\\1/p')\n[ \"$1\" = suite ] && {log}"
-        ),
+        &format!("[ \"$1\" = suite ] && {log}"),
         &passing_result(1),
         1,
         60,
