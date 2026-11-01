@@ -590,6 +590,7 @@ fn fetch_swept(
         && let Some(refreshed) = local_read(
             &first,
             named.clone(),
+            None,
             plan.held.clone(),
             Some(at),
             true,
@@ -602,12 +603,14 @@ fn fetch_swept(
     let sweep = match crate::sweeper::start(dir, change, until) {
         Answer::Done {
             at,
+            ids,
             targets,
             talk_accept,
-        } => return swept_read(dir, named, at, targets, move |_| talk_accept),
+        } => return swept_read(dir, named, at, Some(ids), targets, move |_| talk_accept),
+        Answer::Moved(at) => return swept_read(dir, named, at, None, true, talk_now),
         Answer::Open => {
             let (at, _) = sweep::last(&first.common_dir)?;
-            return swept_read(dir, named, at, true, talk_now);
+            return swept_read(dir, named, at, None, true, talk_now);
         }
         Answer::Busy(running) => {
             let ended = crate::sweeper::wait_ended(&first.common_dir, &running, until);
@@ -615,7 +618,7 @@ fn fetch_swept(
             if let Some((at, _)) = sweep::last(&first.common_dir).filter(|(_, unix)| *unix >= since)
                 && ended
             {
-                return swept_read(dir, named, at, true, talk_now);
+                return swept_read(dir, named, at, None, true, talk_now);
             }
             json!({"state": "running", "by": running})
         }
@@ -633,11 +636,14 @@ fn talk_now(repo: &Repo) -> Option<Value> {
 }
 
 /// The read after a sweep that ended at `at`: the store opened again, since the sweep may have
-/// moved its trunk and so its config.
+/// moved its trunk and so its config; a store that cannot be opened at the trunk the sweep
+/// brought answers with why (`CONFIG_MISSING` when the config left trunk). It lists `listed`
+/// when the sweep names what it settled.
 fn swept_read(
     dir: &Path,
     named: Option<String>,
     at: String,
+    listed: Option<Vec<String>>,
     targets: bool,
     talk: impl FnOnce(&Repo) -> Option<Value>,
 ) -> Option<Result<(Repo, Refreshed), Box<BayResult>>> {
@@ -646,7 +652,7 @@ fn swept_read(
         Err(error) => return Some(Err(Box::new(error.into_result()))),
     };
     let held = repo.git.ref_target(&repo.trunk_tracking_ref()).ok()?;
-    let refreshed = local_read(&repo, named, held, Some(at), targets, talk)?;
+    let refreshed = local_read(&repo, named, listed, held, Some(at), targets, talk)?;
     Some(Ok((repo, refreshed)))
 }
 
@@ -664,7 +670,15 @@ fn stale_read(
     let (at, unix) = sweep::last(&first.common_dir).unzip();
     let stale_s = unix.map(|unix| crate::live::unix_now().saturating_sub(unix));
     let none = |_: &Repo| None;
-    let mut refreshed = local_read(&first, named, plan.held.clone(), at.clone(), false, none)?;
+    let mut refreshed = local_read(
+        &first,
+        named,
+        None,
+        plan.held.clone(),
+        at.clone(),
+        false,
+        none,
+    )?;
     refreshed.fetched_unix = unix;
     refreshed.stale = Some(json!({
         "code": "stale_read",
@@ -677,13 +691,15 @@ fn stale_read(
     Some(Ok((first, refreshed)))
 }
 
-/// What [`fetch_swept`] refreshes from the store alone: as the sweep at `at` left it, the trunk
-/// `held`, the targets read as `targets` says, and the talks `talk` accepts. `None` when the
-/// store cannot serve the read: it holds no trunk, or no chain of the change the read names,
-/// which then comes from the remote.
+/// What [`fetch_swept`] refreshes from the store alone: as the sweep at `at` left it, the changes
+/// `listed` (by default the live ones, or the one the read names), the trunk `held`, the targets
+/// read as `targets` says, and the talks `talk` accepts. `None` when the store cannot serve the
+/// read: it holds no trunk, or no chain of the change the read names, which then comes from the
+/// remote.
 fn local_read(
     repo: &Repo,
     named: Option<String>,
+    listed: Option<Vec<String>>,
     held: Option<String>,
     at: Option<String>,
     targets: bool,
@@ -691,12 +707,13 @@ fn local_read(
 ) -> Option<Refreshed> {
     let trunk = held?;
     let chain = Chain::new(&repo.git);
-    let ids = match named {
-        Some(id) => {
+    let ids = match (listed, named) {
+        (Some(listed), _) => listed,
+        (None, Some(id)) => {
             chain.head(&id).ok()??;
             vec![id]
         }
-        None => live_ids(repo, &chain).ok()?,
+        (None, None) => live_ids(repo, &chain).ok()?,
     };
     // The sweep brought the evidence notes red, flakes, post checks and targets judge.
     repo.swept_evidence();
@@ -766,11 +783,13 @@ fn swept_answer(dir: &Path, change: Option<&str>) -> Value {
             sweep::remember(&common, &remote, &plan.refspecs, &swept);
             json!({"done": {
                 "at": swept.at,
+                "ids": refreshed.ids,
                 "targets": refreshed.targets,
                 "talk_accept": refreshed.talk_accept,
             }})
         }
-        Err(refused) => json!({ "failed": refused.detail }),
+        Err(Unsettled::Moved) => json!({ "moved": swept.at }),
+        Err(Unsettled::Failed(message)) => json!({ "failed": message }),
     };
     lock.end();
     answer
@@ -791,6 +810,14 @@ fn test_wait(name: &str) {
 
 const TEST_HOOKS: bool = option_env!("BAY_RELEASE_VERSION").is_none();
 
+/// Why [`settle_swept`] settled no read.
+enum Unsettled {
+    /// The sweep moved the trunk to a tip whose config the store cannot open.
+    Moved,
+    /// A chain the read lists cannot be read.
+    Failed(String),
+}
+
 /// The local half of [`fetch_swept`]: the moves `swept` found, each namespace by its rule.
 fn settle_swept(
     dir: &Path,
@@ -799,7 +826,7 @@ fn settle_swept(
     swept: &Swept,
     targets: &[(String, String)],
     trunk: String,
-) -> Result<(Repo, Refreshed), Box<BayResult>> {
+) -> Result<(Repo, Refreshed), Unsettled> {
     let tracking = first.trunk_tracking_ref();
     let keys = crate::signing::Keys::load(&first.git);
     let own_log = crate::log::log_ref(&keys.executor_name);
@@ -833,8 +860,7 @@ fn settle_swept(
     crate::coord::fetched(&first.work_root);
     crate::fleet::record(&first, &swept.at);
     let repo = if swept.moves.contains_key(&tracking) {
-        Repo::open_with(dir, crate::repo::Fetch::Never)
-            .map_err(|error| Box::new(error.into_result()))?
+        Repo::open_with(dir, crate::repo::Fetch::Never).map_err(|_| Unsettled::Moved)?
     } else {
         first
     };
@@ -864,7 +890,7 @@ fn settle_swept(
         trunk,
         fetched_at: Some(swept.at.clone()),
         fetched_unix: Some(swept.unix),
-        ids: ids.map_err(|message| Box::new(BayResult::failed(message)))?,
+        ids: ids.map_err(Unsettled::Failed)?,
         targets: targets_fetched,
         talk_accept,
         stale: None,

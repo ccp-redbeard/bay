@@ -23,13 +23,19 @@ use serde_json::Value;
 
 /// What the sweep a status read started answered (`bay sweep`, [`crate::status::sweep_child`]).
 pub enum Answer {
-    /// It swept the remote at `at` and settled the store; `targets` when the remote answered the
-    /// read of the promotion targets; what accepting this actor's talks did.
+    /// It swept the remote at `at` and settled the store; the changes the read lists (`ids`: the
+    /// ones live before the sweep settled them, so a change it saw end is listed once more);
+    /// `targets` when the remote answered the read of the promotion targets; what accepting this
+    /// actor's talks did.
     Done {
         at: String,
+        ids: Vec<String>,
         targets: bool,
         talk_accept: Option<Value>,
     },
+    /// It moved the store's trunk at `at` to a tip whose config the store cannot open: the read
+    /// opens the store again and answers with what that says.
+    Moved(String),
     /// A sweep that ended before it took the lock left its window open.
     Open,
     /// Another sweep of the store runs: what it wrote in the lock.
@@ -93,12 +99,21 @@ fn parse(line: &str) -> Answer {
     {
         return Answer::Done {
             at: at.to_owned(),
+            ids: done["ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|id| id.as_str().map(str::to_owned))
+                .collect(),
             targets: done["targets"] == true,
             talk_accept: done
                 .get("talk_accept")
                 .filter(|accept| !accept.is_null())
                 .cloned(),
         };
+    }
+    if let Some(at) = answer["moved"].as_str() {
+        return Answer::Moved(at.to_owned());
     }
     if answer.get("open").is_some() {
         return Answer::Open;
