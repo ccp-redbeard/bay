@@ -744,11 +744,12 @@ fn swept_answer(dir: &Path, change: Option<&str>) -> Value {
         lock.end();
         return json!({"open": true});
     }
-    test_delay();
+    test_wait("BAY_TEST_SWEEP_DELAY_MS");
     let Ok(swept) = sweep::sweep(&first.git, first.remote(), &plan.refspecs) else {
         lock.end();
         return json!({"unserved": "the remote sweep failed"});
     };
+    test_wait("BAY_TEST_SWEEP_HOLD_MS");
     let Some(trunk) = swept
         .remote_of(&plan.tracking, plan.held.as_deref())
         .map(str::to_owned)
@@ -772,10 +773,11 @@ fn swept_answer(dir: &Path, change: Option<&str>) -> Value {
     answer
 }
 
-/// In a test build, `BAY_TEST_SWEEP_DELAY_MS` holds the sweep that long before it asks the
-/// remote: a sweep slower than a read's deadline.
-fn test_delay() {
-    if let Some(delay) = std::env::var("BAY_TEST_SWEEP_DELAY_MS")
+/// In a test build, the milliseconds the variable `name` sets hold the sweep: before it asks the
+/// remote (`BAY_TEST_SWEEP_DELAY_MS`, a sweep slower than a read's deadline), or after it
+/// (`BAY_TEST_SWEEP_HOLD_MS`, a sweep that takes that long from its start to its end).
+fn test_wait(name: &str) {
+    if let Some(delay) = std::env::var(name)
         .ok()
         .filter(|_| TEST_HOOKS)
         .and_then(|text| text.parse().ok())

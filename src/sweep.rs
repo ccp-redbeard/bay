@@ -20,6 +20,12 @@
 //! it sent. After it the remote holds this store's value of each pushed ref, so the store is as
 //! fresh as the sweep left it, and the write reads back. A push that failed, sent what bay cannot
 //! name, or sent a ref the store no longer holds at that value, still ends the window.
+//!
+//! G620 (a fleet finding, 2026-11-01: at load 100 to 155 a sweep took about 34 s, so its window,
+//! 15 s from its start, had closed before it ended, and every read swept again): the window counts
+//! from the sweep's end, and it is twice as long as the sweep took, at least [`BAY_SWEPT_S`] and
+//! at most [`BAY_SWEPT_MAX_S`]. A store that reads all the time then sweeps about a third of the
+//! time (a 34 s sweep serves 60 s after it), and a quick sweep serves as before.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -30,8 +36,12 @@ use serde_json::{Value, json};
 
 use crate::git::{Git, GitError};
 
-/// How long, in seconds, a listing's sweep serves the status reads of its store after it.
+/// The shortest time, in seconds, a listing's sweep serves the status reads of its store after it
+/// ends (G620: twice as long as it took, from this to [`BAY_SWEPT_MAX_S`]).
 pub const BAY_SWEPT_S: u64 = 15;
+
+/// The longest time, in seconds, a sweep serves the reads after it ends.
+pub const BAY_SWEPT_MAX_S: u64 = 60;
 
 const TEST_HOOKS: bool = option_env!("BAY_RELEASE_VERSION").is_none();
 
@@ -116,13 +126,32 @@ pub fn sweep(git: &Git, remote: &str, refspecs: &[String]) -> Result<Swept, GitE
     })
 }
 
-/// The window, in seconds: [`BAY_SWEPT_S`], or in a test build `BAY_TEST_SWEPT_S`.
-fn window_s() -> u64 {
+/// In a test build, the window `BAY_TEST_SWEPT_S` sets, in seconds after the sweep's end,
+/// whatever the sweep took.
+fn test_window_s() -> Option<u64> {
     std::env::var("BAY_TEST_SWEPT_S")
         .ok()
         .filter(|_| TEST_HOOKS)
         .and_then(|text| text.parse().ok())
-        .unwrap_or(BAY_SWEPT_S)
+}
+
+/// The window after a sweep that took `took` seconds (G620): twice that, from [`BAY_SWEPT_S`] to
+/// [`BAY_SWEPT_MAX_S`].
+#[must_use]
+pub fn window_after(took: u64) -> u64 {
+    test_window_s().unwrap_or_else(|| span(took))
+}
+
+/// Twice `took`, from [`BAY_SWEPT_S`] to [`BAY_SWEPT_MAX_S`].
+fn span(took: u64) -> u64 {
+    took.saturating_mul(2).clamp(BAY_SWEPT_S, BAY_SWEPT_MAX_S)
+}
+
+/// The longest a sweep serves after it began, in seconds: its fetch's bound and the longest
+/// window after it. The push marks are kept this long, so a window never outlives them.
+fn served_s() -> u64 {
+    let window = test_window_s().unwrap_or(0).max(BAY_SWEPT_MAX_S);
+    crate::result::GIT_NETWORK_TIMEOUT.as_secs() + window
 }
 
 /// The record of the last listing's sweep of the store whose common directory is `common`.
@@ -224,8 +253,9 @@ fn mark_time(name: &std::ffi::OsStr) -> Option<u64> {
 }
 
 /// The time of the last listing's sweep of `remote` by `refspecs` in the store of `git`, whose
-/// common directory is `common`, while its window is open at `now`; `None` when no such sweep is
-/// that recent, or the store pushed after it began what it does not hold ([`holds_pushed`]).
+/// common directory is `common`, while its window is open at `now` ([`window_after`] its end);
+/// `None` when no such sweep is that recent, or the store pushed after it began what it does not
+/// hold ([`holds_pushed`]). A record that names no end opens no window.
 #[must_use]
 pub fn window(
     git: &Git,
@@ -237,10 +267,12 @@ pub fn window(
     let text = std::fs::read_to_string(record(common)).ok()?;
     let held: Value = serde_json::from_str(&text).ok()?;
     let unix = held["unix"].as_u64()?;
+    let ended = held["ended"].as_u64()?;
     let open = held["remote"] == remote
         && held["refspecs"] == json!(refspecs)
         && unix <= now
-        && now < unix.saturating_add(window_s())
+        && now < ended.saturating_add(window_after(ended.saturating_sub(unix)))
+        && now < unix.saturating_add(served_s())
         && holds_pushed(git, common, refspecs, unix);
     open.then(|| held["at"].as_str().map(str::to_owned))?
 }
@@ -338,11 +370,19 @@ fn pushed_refs(args: &[&str]) -> Option<Vec<(String, String)>> {
     (!sent.is_empty()).then_some(sent)
 }
 
-/// Records that a listing's sweep of `remote` by `refspecs` settled this store, so the reads in
-/// its window are served by it. Best effort: a record that cannot be written opens no window.
+/// Records that a listing's sweep of `remote` by `refspecs` settled this store, now, so the reads
+/// in its window are served by it: its start and its end. Best effort: a record that cannot be
+/// written opens no window.
 pub fn remember(common: &Path, remote: &str, refspecs: &[String], swept: &Swept) {
     let path = record(common);
-    let held = json!({"remote": remote, "refspecs": refspecs, "at": swept.at, "unix": swept.unix});
+    let ended = crate::live::unix_now().max(swept.unix);
+    let held = json!({
+        "remote": remote,
+        "refspecs": refspecs,
+        "at": swept.at,
+        "unix": swept.unix,
+        "ended": ended,
+    });
     replace(&path, &held.to_string());
 }
 
@@ -350,11 +390,11 @@ pub fn remember(common: &Path, remote: &str, refspecs: &[String], swept: &Swept)
 /// when it succeeded: a push may have changed what the remote holds, so it ends the window of
 /// every sweep that began at or before it, unless the store holds what it sent
 /// ([`holds_pushed`]). A push that ends inside the second a sweep began counts for that sweep
-/// too. The marks older than any window are removed. Best effort.
+/// too. The marks older than any window ([`served_s`]) are removed. Best effort.
 pub fn pushed(common: &Path, now: u64, args: &[&str], ok: bool) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = push_marks(common);
-    let past = now.saturating_sub(window_s().max(BAY_SWEPT_S));
+    let past = now.saturating_sub(served_s());
     for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
         if mark_time(&entry.file_name()).is_some_and(|at| at < past) {
             let _ = std::fs::remove_file(entry.path());
@@ -435,6 +475,15 @@ pub fn apply(git: &Git, moves: &[Update]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_is_twice_the_sweep_from_its_floor_to_its_ceiling() {
+        assert_eq!(span(0), BAY_SWEPT_S);
+        assert_eq!(span(7), BAY_SWEPT_S);
+        assert_eq!(span(12), 24);
+        assert_eq!(span(34), BAY_SWEPT_MAX_S);
+        assert_eq!(span(u64::MAX), BAY_SWEPT_MAX_S);
+    }
 
     #[test]
     fn a_push_names_the_refs_it_sent_or_none() {
