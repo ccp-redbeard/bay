@@ -29,7 +29,7 @@ use crate::clock::now_rfc3339;
 use crate::completion::{self, Dimension, Need};
 use crate::evidence::{self, EvidenceRecord};
 use crate::inputs::Probe;
-use crate::publish::scan;
+use crate::publish::{scan, scan_many};
 use crate::receipts::{self, Receipt};
 use crate::repo::Repo;
 use crate::result::{BayResult, Freshness, Reason};
@@ -39,8 +39,9 @@ use crate::sweeper::Answer;
 use crate::view;
 
 /// G619: how long, in seconds, a status read waits for the remote by default before it answers
-/// from the store ([`fetch_swept`]). The local read after it took up to about 1.5 s at load
-/// 100 and more, so a read answers inside 5 s.
+/// from the store ([`fetch_swept`]). The local read after it is not bounded by it: on a store of
+/// 3,490 chains, at load 63-80 on 14 cores, a read served from a sweep took 4.5-7.9 s in all
+/// before G624 cut its git work (2026-11-01).
 pub const STATUS_DEADLINE_S: u64 = 3;
 
 /// The deadline of a read that names none: [`STATUS_DEADLINE_S`], or in a test build
@@ -1252,7 +1253,7 @@ fn leftovers(
         .into_iter()
         .map(|held| (held.id, held.record))
         .collect();
-    let mut out = Vec::new();
+    let mut checked = Vec::new();
     let mut more = Vec::new();
     for id in view::all(repo)
         .into_iter()
@@ -1267,15 +1268,25 @@ fn leftovers(
         // finding, 2026-10-31: 20 such views cost each status of 34 agents about 12 s); `bay
         // status <change>` checks one.
         let mine = me.is_none_or(|me| me == record.actor.name);
-        if only.is_none() && (!mine || out.len() >= LISTED) {
+        if only.is_none() && (!mine || checked.len() >= LISTED) {
             if mine || ended(record.state) {
                 more.push(id);
             }
             continue;
         }
-        let landed = !scan(&repo.git, &record.base_first, trunk, &id)?
-            .publications
-            .is_empty();
+        checked.push((id, record));
+    }
+    // G624: the checked views' landings from one log of trunk, never one log per view.
+    let bases: Vec<(&str, &str)> = checked
+        .iter()
+        .map(|(id, record)| (record.base_first.as_str(), id.as_str()))
+        .collect();
+    let scans = scan_many(&repo.git, trunk, &bases)?;
+    let mut out = Vec::new();
+    for (id, record) in checked {
+        let landed = scans
+            .get(&id)
+            .is_some_and(|scan| !scan.publications.is_empty());
         let state = if landed {
             json!("landed")
         } else {

@@ -560,11 +560,12 @@ fn parse_record(text: &str) -> Result<ChangeRecord, ChainError> {
 
 /// The records [`Chain::read_all`] read in this process, by git directory and chain head.
 type HeldRecords = std::sync::Mutex<
-    std::collections::HashMap<
-        std::path::PathBuf,
-        std::collections::HashMap<String, std::sync::Arc<ChangeRecord>>,
-    >,
+    std::collections::HashMap<std::path::PathBuf, std::collections::HashMap<String, Held>>,
 >;
+
+/// A record [`Chain::read_all`] read, with its head's committer time in Unix seconds (0 when
+/// Git gave none).
+type Held = (u64, std::sync::Arc<ChangeRecord>);
 
 /// One [`Chain::read_all`] at a time reads the records this process does not hold, so a read
 /// beside it (G616: the sections of a status run side by side) finds them held and reads none
@@ -578,31 +579,33 @@ fn held_table() -> &'static HeldRecords {
 
 /// The records this process already read of `heads` in `git`'s repository. A record at a head
 /// never changes: the head's id names its tree, and the tree its `change.json`.
-fn held_records(
-    git: &Git,
-    heads: &[(String, u64, String)],
-) -> std::collections::HashMap<String, std::sync::Arc<ChangeRecord>> {
+fn held_records(git: &Git, heads: &[(String, String)]) -> std::collections::HashMap<String, Held> {
     let table = held_table()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     table.get(git.dir()).map_or_else(Default::default, |kept| {
         heads
             .iter()
-            .filter_map(|(head, _, _)| Some((head.clone(), kept.get(head)?.clone())))
+            .filter_map(|(head, _)| Some((head.clone(), kept.get(head)?.clone())))
             .collect()
     })
 }
 
 /// Keeps `records` as the records of `git`'s repository, in place of those kept before: only
 /// the heads of the newest listing, so a long-lived process (an executor) stays bounded.
-fn keep_records(
-    git: &Git,
-    records: std::collections::HashMap<String, std::sync::Arc<ChangeRecord>>,
-) {
+fn keep_records(git: &Git, records: std::collections::HashMap<String, Held>) {
     held_table()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(git.dir().to_path_buf(), records);
+}
+
+/// The committer time of a commit object's bytes, 0 when there is none.
+fn committed_of(commit: Option<Vec<u8>>) -> u64 {
+    commit
+        .and_then(|commit| String::from_utf8(commit).ok())
+        .and_then(|text| crate::flow::committer_time(&text))
+        .unwrap_or(0)
 }
 
 /// One chain as [`Chain::read_all`] found it.
@@ -769,19 +772,20 @@ impl<'a> Chain<'a> {
     ///
     /// A git fault listing the chains or reading the batch.
     pub fn read_all(&self) -> Result<Vec<HeldChain>, ChainError> {
+        // G624: the listing names each head only; its committer time comes from its commit in
+        // the batch below, once per head. `%(committerdate)` parsed every head's commit on every
+        // listing (3,490 chains, about six listings per `bay status`, 2026-11-01).
         let listed = self.git.run(&[
             "for-each-ref",
-            "--format=%(objectname) %(committerdate:unix) %(refname)",
+            "--format=%(objectname) %(refname)",
             CHANGES_PREFIX,
         ])?;
-        let heads: Vec<(String, u64, String)> = listed
+        let heads: Vec<(String, String)> = listed
             .lines()
             .filter_map(|line| {
-                let mut words = line.splitn(3, ' ');
-                let head = words.next()?.to_owned();
-                let committed: u64 = words.next()?.parse().unwrap_or(0);
-                let id = words.next()?.strip_prefix(CHANGES_PREFIX)?.to_owned();
-                Some((head, committed, id))
+                let (head, name) = line.split_once(' ')?;
+                let id = name.strip_prefix(CHANGES_PREFIX)?.to_owned();
+                Some((head.to_owned(), id))
             })
             .collect();
         let _turn = READING
@@ -790,28 +794,43 @@ impl<'a> Chain<'a> {
         let mut known = held_records(self.git, &heads);
         let unread: Vec<&String> = heads
             .iter()
-            .map(|(head, _, _)| head)
+            .map(|(head, _)| head)
             .filter(|head| !known.contains_key(*head))
             .collect();
         let names: Vec<String> = unread
             .iter()
-            .map(|head| format!("{head}:{RECORD_FILE}"))
+            .flat_map(|head| [(*head).clone(), format!("{head}:{RECORD_FILE}")])
             .collect();
-        for (head, text) in unread.into_iter().zip(self.git.objects(&names)?) {
+        let mut objects = self.git.objects(&names)?.into_iter();
+        for head in unread {
+            let (commit, text) = (objects.next().flatten(), objects.next().flatten());
             if let Some(record) = text
                 .and_then(|text| String::from_utf8(text).ok())
                 .and_then(|text| parse_record(&text).ok())
             {
-                known.insert(head.clone(), std::sync::Arc::new(record));
+                known.insert(
+                    head.clone(),
+                    (committed_of(commit), std::sync::Arc::new(record)),
+                );
             }
         }
         let held = heads
             .into_iter()
-            .filter_map(|(head, committed, id)| {
-                // G563: a copy of another change's chain is left out, as [`Chain::read`] refuses it.
-                let (head, record) = match known.get(&head) {
-                    Some(record) if record.id == id => (head, ChangeRecord::clone(record)),
-                    _ => self.read(&id).ok()?,
+            .filter_map(|(head, id)| {
+                let (head, committed, record) = match known.get(&head) {
+                    Some((committed, record)) if record.id == id => {
+                        (head, *committed, ChangeRecord::clone(record))
+                    }
+                    // G563: a copy of another change's chain is left out, as [`Chain::read`]
+                    // refuses it.
+                    Some(_) => return None,
+                    None => {
+                        let (head, record) = self.read(&id).ok()?;
+                        let commit = self
+                            .git
+                            .run_bytes(&["cat-file", "commit", &head], &[], None);
+                        (head, committed_of(commit.ok()), record)
+                    }
                 };
                 Some(HeldChain {
                     id,

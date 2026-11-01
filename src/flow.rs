@@ -298,7 +298,7 @@ pub fn commit_times(git: &Git, commits: &[String]) -> Result<HashMap<String, u64
 
 /// The committer time of a commit object's text: the next to last word of its `committer`
 /// header line (`committer <name> <<email>> <time> <zone>`).
-fn committer_time(text: &str) -> Option<u64> {
+pub(crate) fn committer_time(text: &str) -> Option<u64> {
     text.lines()
         .take_while(|line| !line.is_empty())
         .find_map(|line| line.strip_prefix("committer "))
@@ -325,8 +325,17 @@ fn started(git: &Git, chains: &[&HeldChain]) -> HashMap<String, u64> {
         input.push_str(&held.record.base_first);
         input.push('\n');
     }
+    // G624: `rev-list --timestamp --parents` reads the time and parents from the commit-graph;
+    // `log --format` read every commit object of the walk, about four times the CPU (37,687
+    // commits on a fleet's store, 2026-11-01: 0.44 s against 0.10 s).
     let Ok(out) = git.run_with(
-        &["log", "--first-parent", "--format=%H %ct %P", "--stdin"],
+        &[
+            "rev-list",
+            "--first-parent",
+            "--timestamp",
+            "--parents",
+            "--stdin",
+        ],
         &[],
         Some(input.as_bytes()),
     ) else {
@@ -337,8 +346,8 @@ fn started(git: &Git, chains: &[&HeldChain]) -> HashMap<String, u64> {
         .lines()
         .filter_map(|entry| {
             let mut words = entry.split_whitespace();
-            let commit = words.next()?;
             let time = words.next()?.parse().ok()?;
+            let commit = words.next()?;
             Some((commit, (time, words.next())))
         })
         .collect();
