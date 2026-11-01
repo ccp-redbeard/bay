@@ -215,11 +215,12 @@ pub(crate) fn serves_post_work(git: &Git, commit: &str) -> bool {
 
 /// The runner's own post checks (`[runner] post`): after its queue's work, each post check of the
 /// policy at main's newest tip's first parent runs once on that tip when this box serves its
-/// environment and holds no record of it there yet. One run answers every landing since the last
-/// run's tip: a pass, or a red the red judgement (`crate::red`) ranges and `[runner] bisect_post`
-/// narrows. A red check runs again on each new tip (G492), and its request names `rerun`: the
-/// units that failed in its newest failing record (G540). One piece for each environment none of
-/// `taken` names: its first check in the order [`in_turn`] gives.
+/// environment, holds no record of it there yet, and no other producer answered it there
+/// ([`answered_elsewhere`], G625). One run answers every landing since the last run's tip: a pass,
+/// or a red the red judgement (`crate::red`) ranges and `[runner] bisect_post` narrows. A red check
+/// runs again on each new tip (G492), and its request names `rerun`: the units that failed in its
+/// newest failing record (G540). One piece for each environment none of `taken` names: its first
+/// check in the order [`in_turn`] gives.
 fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
     if !repo.config.post_tips() {
         return Ok((Vec::new(), Vec::new()));
@@ -270,7 +271,19 @@ fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
                 && !taken.contains(&entry.environment)
         })
         .collect();
-    let (entries, ran) = in_turn(git, (registry.as_ref(), &writer), &tip, entries, &reds);
+    let (entries, ran) = in_turn(
+        git,
+        (registry.as_ref(), &writer, &policy),
+        &tip,
+        entries,
+        &reds,
+    );
+    let elsewhere = answered_elsewhere(
+        git,
+        (registry.as_ref(), &writer, &policy),
+        &entries,
+        (tip.as_str(), evidence::records_for(git, &tree)?),
+    )?;
     let mut pieces: Vec<Piece> = Vec::new();
     for entry in entries {
         if pieces
@@ -280,7 +293,7 @@ fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
             continue;
         }
         let id = CheckId::new(&entry.id, &entry.environment);
-        if writer.records(git, &tree, &id)? > 0 {
+        if writer.records(git, &tree, &id)? > 0 || elsewhere.contains(&id) {
             continue;
         }
         // BACKLOG 117: a check no worker answered here lately waits, and this pass runs the
@@ -343,12 +356,12 @@ fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
 }
 
 /// `entries` in the order their post runs come in, and how many landings back this box last
-/// recorded each ([`last_runs`]): a check this box has not answered for half the red window
-/// first (G582), then a red check (G492), then the one this box ran longest ago (G433), then the
-/// ones no landing in the red window answers (`crate::red`'s pending).
+/// recorded each, or another producer answered it ([`last_runs`]): a check no box has answered
+/// for half the red window first (G582), then a red check (G492), then the one answered longest
+/// ago (G433), then the ones no landing in the red window answers (`crate::red`'s pending).
 fn in_turn<'a>(
     git: &Git,
-    (registry, writer): (Option<&Registry>, &Writer),
+    (registry, writer, policy): (Option<&Registry>, &Writer, &crate::policy::Policy),
     tip: &str,
     mut entries: Vec<&'a crate::policy::CheckEntry>,
     reds: &[Red],
@@ -372,7 +385,7 @@ fn in_turn<'a>(
     // so it went first on every tip, and a check in the policy's tail (edge-py-fast, fifth on its
     // box) ran on no tip for eight hours. The check this box ran longest ago goes first; ties
     // keep the rule above.
-    let ran = last_runs(git, writer, tip, &entries);
+    let ran = last_runs(git, (registry, writer, policy), tip, &entries);
     // G582 (a fleet finding, 2026-10-30: with one runner for its environment and red edge-py-fast
     // runs of ~30 min, scripts-fast ran on no tip for 49 landings and passed the red window, so a
     // failure there could no longer be ranged): a red check goes first on each new tip, and one
@@ -458,36 +471,93 @@ fn failed_units(
     Ok(units)
 }
 
-/// How many landings back from `tip` this box last recorded each of `entries` (G433), over the
-/// newest [`RAN_SPAN`] commits of main's first-parent line; a check it ran in none is absent.
-/// Only an order: a line or a note it cannot read counts as no record, never as no post work.
+/// How many landings back from `tip` this box last recorded each of `entries` (G433), or another
+/// producer answered it there ([`answered_elsewhere`], G625), over the newest [`RAN_SPAN`]
+/// commits of main's first-parent line; a check answered on none is absent. One read for every
+/// landing's records (G196). Only an order: a line or a note it cannot read counts as no record,
+/// never as no post work.
 fn last_runs(
     git: &Git,
-    writer: &Writer,
+    trust: (Option<&Registry>, &Writer, &crate::policy::Policy),
     tip: &str,
     entries: &[&crate::policy::CheckEntry],
 ) -> std::collections::HashMap<(String, String), usize> {
     let span = RAN_SPAN.to_string();
     let mut ran = std::collections::HashMap::new();
-    let Ok(trees) = git.run(&["log", "--first-parent", "-n", &span, "--format=%T", tip]) else {
+    let Ok(line) = git.run(&["log", "--first-parent", "-n", &span, "--format=%H %T", tip]) else {
         return ran;
     };
-    for (ago, tree) in trees.lines().enumerate() {
+    let landings: Vec<(&str, &str)> = line.lines().filter_map(|l| l.split_once(' ')).collect();
+    let trees: Vec<&str> = landings.iter().map(|(_, tree)| *tree).collect();
+    let Ok(records) = evidence::records_for_many(git, &trees) else {
+        return ran;
+    };
+    for (ago, ((commit, _), records)) in landings.iter().zip(records).enumerate() {
         if ran.len() == entries.len() {
             break;
         }
-        for record in evidence::producer_records(git, &writer.name, tree).unwrap_or_default() {
-            if record.kind == evidence::KIND_CHECK
-                && entries
-                    .iter()
-                    .any(|entry| record.check == CheckId::new(&entry.id, &entry.environment))
+        let own: Vec<CheckId> = records
+            .iter()
+            .filter(|record| {
+                record.producer.name == trust.1.name && record.kind == evidence::KIND_CHECK
+            })
+            .map(|record| record.check.clone())
+            .collect();
+        let elsewhere =
+            answered_elsewhere(git, trust, entries, (*commit, records)).unwrap_or_default();
+        for check in own.into_iter().chain(elsewhere) {
+            if entries
+                .iter()
+                .any(|entry| check == CheckId::new(&entry.id, &entry.environment))
             {
-                ran.entry((record.check.id, record.check.environment))
-                    .or_insert(ago);
+                ran.entry((check.id, check.environment)).or_insert(ago);
             }
         }
     }
     ran
+}
+
+/// G625 (E87, a fleet finding, 2026-11-01: venue11 and venue12 A served one environment, and each
+/// ran every post check on each tip: 62 runs on 46 tips in three hours, no verdict different,
+/// 36 of them after the other box had recorded its answer): the checks of `entries` that another
+/// producer's `records` on `commit`'s tree already answer, as the red judgment counts them (the
+/// producers a check lists, verified under the registry, this policy's manifest, and `commit`
+/// for a commit-keyed check), with a verdict that is not unknown. Two boxes that start one run
+/// together both run it: only a record already there answers.
+///
+/// # Errors
+///
+/// A class file cannot be written.
+fn answered_elsewhere(
+    git: &Git,
+    (registry, writer, policy): (Option<&Registry>, &Writer, &crate::policy::Policy),
+    entries: &[&crate::policy::CheckEntry],
+    (commit, records): (&str, Vec<EvidenceRecord>),
+) -> Result<Vec<CheckId>, String> {
+    let ids: Vec<CheckId> = entries
+        .iter()
+        .map(|entry| CheckId::new(&entry.id, &entry.environment))
+        .collect();
+    let others: Vec<EvidenceRecord> = records
+        .into_iter()
+        .filter(|record| {
+            record.producer.name != writer.name
+                && record.kind == evidence::KIND_CHECK
+                && ids.contains(&record.check)
+        })
+        .collect();
+    if others.is_empty() {
+        return Ok(Vec::new());
+    }
+    let counted = policy.answering(evidence::counted(git, others, registry)?);
+    Ok(ids
+        .into_iter()
+        .filter(|id| {
+            let subject = policy.commit_keyed(id).then_some(commit);
+            evidence::combine(&counted, id, &policy.manifest_digest, subject)
+                != evidence::Combined::Unknown
+        })
+        .collect())
 }
 
 /// How far back main's line [`last_runs`] reads: a check this box ran on none of these many
