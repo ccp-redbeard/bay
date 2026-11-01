@@ -1,15 +1,15 @@
 //! G617 (a fleet finding, 2026-10-31: after G615 and G616 the one sweep of a `bay status` still
 //! took 3.2 to 4.0 s of each read on a hosted remote, however few refs had moved). A listing's
 //! sweep serves every status read of its store for a short window after it: such a read asks the
-//! remote nothing and names that sweep's time as its `fetched_at`. A read that names one change
-//! opens no window, and a read of a change the store does not hold still asks the remote. How a
-//! push ends the window is G618. Read from the trace a test build writes when `BAY_TEST_GIT_TRACE`
+//! remote nothing and names that sweep's time as its `fetched_at`. Every sweep settles every live
+//! chain (G619), so a read that names one change opens the window too; a read of a change the
+//! store does not hold still asks the remote. How a push ends the window is G618. Read from the trace a test build writes when `BAY_TEST_GIT_TRACE`
 //! names a file (G171); `BAY_TEST_SWEPT_S` sets the window in a test build.
 //!
 //! Guards to mutate: in `src/status.rs`, never serve a read from the window, and the second read
 //! asks the remote; name the time of the read as a windowed read's `fetched_at`, and it is not
-//! the sweep's; remember a named read's sweep, and the listing after it is served the old trunk;
-//! serve a named read of a chain the store lacks, and the change is not shown.
+//! the sweep's; settle only the named chain of a named read's sweep, and the listing after it is
+//! served chains it did not settle; serve a named read of a chain the store lacks, and the change is not shown.
 
 use crate::support;
 
@@ -76,7 +76,12 @@ pub(crate) fn status(
 
 /// Moves the remote's trunk one commit forward, as another clone's landing would: the new tip.
 pub(crate) fn move_trunk(test_box: &TestBox, remote: &Path) -> String {
-    let main = test_box.git_bare(remote, &["rev-parse", "refs/heads/main"]);
+    move_ref(test_box, remote, "refs/heads/main")
+}
+
+/// Moves the remote's ref `name` one commit forward, its tree kept: the new tip.
+pub(crate) fn move_ref(test_box: &TestBox, remote: &Path, name: &str) -> String {
+    let main = test_box.git_bare(remote, &["rev-parse", name]);
     let next = test_box.git_bare(
         remote,
         &[
@@ -89,10 +94,10 @@ pub(crate) fn move_trunk(test_box: &TestBox, remote: &Path) -> String {
             "-p",
             &main,
             "-m",
-            "the trunk moves",
+            "the ref moves",
         ],
     );
-    test_box.git_bare(remote, &["update-ref", "refs/heads/main", &next, &main]);
+    test_box.git_bare(remote, &["update-ref", name, &next, &main]);
     next
 }
 
@@ -135,15 +140,40 @@ fn a_read_inside_the_window_asks_the_remote_nothing() {
 }
 
 #[test]
-fn a_read_that_names_a_change_opens_no_window() {
-    let (test_box, _, remote, reader, id) = store();
+fn a_read_that_names_a_change_opens_the_window_too() {
+    let (test_box, repo, remote, reader, id) = store();
+    // Another live change, which the named read does not name: its sweep settles it too.
+    let (other, _) = test_box.start_and_edit(&repo);
+    test_box.git_ok(
+        &reader,
+        &[
+            "fetch",
+            "-q",
+            "origin",
+            "+refs/bay/changes/*:refs/bay/changes/*",
+        ],
+    );
+    let moved = move_ref(&test_box, &remote, &format!("refs/bay/changes/{other}"));
     let (asked, first) = status(&test_box, &reader, Some(&id), OPEN, "first");
     assert_eq!(asked, 1, "the named read did not sweep: {first}");
-    let next = move_trunk(&test_box, &remote);
+    let main = first["detail"]["main"].clone();
+    move_trunk(&test_box, &remote);
 
     let (asked, listed) = status(&test_box, &reader, None, OPEN, "listed");
-    assert_eq!(asked, 1, "the listing was served by a named read's sweep");
-    assert_eq!(listed["detail"]["main"], next.as_str(), "{listed}");
+    assert_eq!(
+        asked, 0,
+        "the listing was not served by a named read's sweep"
+    );
+    assert_eq!(listed["detail"]["main"], main, "{listed}");
+    let held = test_box.git_ok(
+        &reader,
+        &["rev-parse", &format!("refs/bay/changes/{other}")],
+    );
+    assert_eq!(
+        held.trim(),
+        moved,
+        "the named read's sweep did not settle every live chain"
+    );
 }
 
 #[test]

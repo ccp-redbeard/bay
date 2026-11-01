@@ -20,6 +20,7 @@
 //! and the changes waiting for an approval, derived from the chains on read ([`crate::flow`]).
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -34,11 +35,31 @@ use crate::repo::Repo;
 use crate::result::{BayResult, Freshness, Reason};
 use crate::runtime::Confirmed;
 use crate::sweep::{self, Swept};
+use crate::sweeper::Answer;
 use crate::view;
 
+/// G619: how long, in seconds, a status read waits for the remote by default before it answers
+/// from the store ([`fetch_swept`]). The local read after it took up to about 1.5 s at load
+/// 100 and more, so a read answers inside 5 s.
+pub const STATUS_DEADLINE_S: u64 = 3;
+
+/// The deadline of a read that names none: [`STATUS_DEADLINE_S`], or in a test build
+/// `BAY_TEST_STATUS_DEADLINE_S`.
 #[must_use]
-pub fn status(dir: &Path, change: Option<&str>) -> BayResult {
-    run(dir, change).unwrap_or_else(BayResult::failed)
+pub fn default_deadline() -> Duration {
+    Duration::from_secs(
+        std::env::var("BAY_TEST_STATUS_DEADLINE_S")
+            .ok()
+            .filter(|_| TEST_HOOKS)
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(STATUS_DEADLINE_S),
+    )
+}
+
+/// `bay status [change]`, waiting for the remote at most `deadline` from now (G619).
+#[must_use]
+pub fn status(dir: &Path, change: Option<&str>, deadline: Duration) -> BayResult {
+    run(dir, change, deadline).unwrap_or_else(BayResult::failed)
 }
 
 /// What a cached read says instead of a fetch time: it never synchronized.
@@ -171,12 +192,19 @@ fn settle_listed(
     swept: &Swept,
 ) -> Result<Vec<String>, String> {
     let is_named = named.is_some();
+    // G619: every sweep settles every live chain, so each one serves the reads in its window.
+    let mut settled = live_ids(repo, chain)?;
     let ids = match named {
-        Some(id) => vec![id],
-        None => live_ids(repo, chain)?,
+        Some(id) => {
+            if !settled.contains(&id) {
+                settled.push(id.clone());
+            }
+            vec![id]
+        }
+        None => settled.clone(),
     };
     let mut updates = Vec::new();
-    for id in &ids {
+    for id in &settled {
         let name = change_ref(id);
         let Some(found) = swept.moves.get(&name) else {
             continue;
@@ -392,12 +420,16 @@ fn held_records(chain: &Chain, ids: &[String], named: bool) -> Result<Vec<Change
 struct Refreshed {
     trunk: String,
     fetched_at: Option<String>,
+    /// The Unix time of `fetched_at`, when known.
+    fetched_unix: Option<u64>,
     /// The changes the read names, their chains refreshed ([`listed`]).
     ids: Vec<String>,
     /// Whether the remote answered the read of the promotion targets.
     targets: bool,
     /// What accepting this actor's talks did (`detail.talk_accept`), online only.
     talk_accept: Option<Value>,
+    /// G619: the `stale_read` warning of a read past its deadline.
+    stale: Option<Value>,
 }
 
 /// Fetches what a status read judges: the trunk first, then at once each set of refs that no
@@ -407,6 +439,7 @@ struct Refreshed {
 /// three round trips, one after another past the others, took 4 s of a 15 s status). Offline,
 /// only the log and the chains are tried, as before.
 fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
+    let unix = crate::live::unix_now();
     let (trunk, fetched_at) = synchronize(repo)?;
     let online = fetched_at.is_some();
     let (ids, targets, talk_accept) = std::thread::scope(|scope| {
@@ -443,11 +476,76 @@ fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
     });
     Ok(Refreshed {
         trunk,
+        fetched_unix: fetched_at.is_some().then_some(unix),
         fetched_at,
         ids: ids?,
         targets,
         talk_accept,
+        stale: None,
     })
+}
+
+/// What a sweep of this store asks the remote, from the config at the trunk the store holds.
+struct Plan {
+    tracking: String,
+    /// The store's trunk; `None` when it holds none.
+    held: Option<String>,
+    /// Each promotion target's remote ref and its local copy.
+    targets: Vec<(String, String)>,
+    refspecs: Vec<String>,
+}
+
+impl Plan {
+    fn of(repo: &Repo) -> Option<Self> {
+        let tracking = repo.trunk_tracking_ref();
+        let targets: Vec<(String, String)> = repo
+            .config
+            .targets
+            .iter()
+            .map(|target| (target.reference(), crate::target::local_ref(&target.name)))
+            .collect();
+        let held = repo.git.ref_target(&tracking).ok()?;
+        let mut refspecs = vec![format!("+refs/heads/{}:{tracking}", repo.trunk())];
+        for prefix in [
+            CHANGES_PREFIX,
+            crate::names::REQUESTS,
+            crate::log::LOG_PREFIX,
+            evidence::EVIDENCE_PREFIX,
+        ] {
+            refspecs.push(format!("+{prefix}*:{prefix}*"));
+        }
+        refspecs.extend(crate::fleet::refspecs());
+        // Each target is asked by its name as a prefix, so one the remote no longer holds fails
+        // no sweep: it is named as a prune of its copy. A ref that shares the prefix is never
+        // taken.
+        refspecs.extend(
+            targets
+                .iter()
+                .map(|(reference, local)| format!("+{reference}*:{local}*")),
+        );
+        Some(Self {
+            tracking,
+            held,
+            targets,
+            refspecs,
+        })
+    }
+
+    /// The time of the sweep whose window is open now ([`sweep::window`]).
+    fn window(&self, repo: &Repo) -> Option<String> {
+        sweep::window(
+            &repo.git,
+            &repo.common_dir,
+            repo.remote(),
+            &self.refspecs,
+            crate::live::unix_now(),
+        )
+    }
+}
+
+/// Whether this store holds the chain of the change a read names, or the read names none.
+fn holds_named(repo: &Repo, named: Option<&str>) -> bool {
+    named.is_none_or(|id| Chain::new(&repo.git).head(id).ok().flatten().is_some())
 }
 
 /// G615: [`fetch_all`] in one round trip: the remote is asked once ([`crate::sweep`]) for every
@@ -461,83 +559,135 @@ fn fetch_all(repo: &Repo, named: Option<String>) -> Result<Refreshed, String> {
 /// - every other writer's evidence notes, forced and never pruned ([`Repo::fetch_evidence`]);
 /// - each target's ref, its copy removed when the remote lacks it ([`crate::target::fetch`]),
 ///   and fetched as before when the config the trunk moved to names other targets;
-/// - the chains of the changes the read names ([`settle_listed`]), after the receipts' sync,
-///   which reads the remote's chains and land requests from the same sweep and writes none.
+/// - the chains of every live change and of the change the read names ([`settle_listed`]),
+///   after the receipts' sync, which reads the remote's chains and land requests from the same
+///   sweep and writes none.
 ///
 /// This actor's talks are then accepted beside the chains (G612), and the lane refs (NEW-4)
 /// fetched as before. `None` when a sweep cannot serve the read, which then fetches as before
 /// ([`fetch_all`]): no config at the trunk this store holds, a partial clone (a sweep's mixed
 /// fetch carries no filter, `Git::run`), or a sweep that fails (offline, or a git that cannot).
-/// Inside the window of a listing's sweep (G617), the read is served by the store as that sweep
-/// left it ([`windowed`]).
+/// Inside the window of a sweep (G617), the read is served by the store as that sweep left it
+/// ([`local_read`]).
+///
+/// G619: the sweep runs as a process of its own ([`crate::sweeper`]), and the read waits for it
+/// until `until`. Past it, or while another sweep of the store runs past it, the read is the
+/// store as the last sweep left it, and says how old ([`stale_read`]). A read of a change this
+/// store lacks waits for the sweep: nothing here can answer it.
 fn fetch_swept(
     dir: &Path,
     change: Option<&str>,
+    started: Instant,
+    until: Instant,
 ) -> Option<Result<(Repo, Refreshed), Box<BayResult>>> {
     let first = Repo::open_with(dir, crate::repo::Fetch::Never).ok()?;
     if first.git.is_partial() {
         return None;
     }
-    let tracking = first.trunk_tracking_ref();
-    let targets: Vec<(String, String)> = first
-        .config
-        .targets
-        .iter()
-        .map(|target| (target.reference(), crate::target::local_ref(&target.name)))
-        .collect();
-    let held = first.git.ref_target(&tracking).ok()?;
-    let mut refspecs = vec![format!("+refs/heads/{}:{tracking}", first.trunk())];
-    for prefix in [
-        CHANGES_PREFIX,
-        crate::names::REQUESTS,
-        crate::log::LOG_PREFIX,
-        evidence::EVIDENCE_PREFIX,
-    ] {
-        refspecs.push(format!("+{prefix}*:{prefix}*"));
-    }
-    refspecs.extend(crate::fleet::refspecs());
-    // Each target is asked by its name as a prefix, so one the remote no longer holds fails no
-    // sweep: it is named as a prune of its copy. A ref that shares the prefix is never taken.
-    refspecs.extend(
-        targets
-            .iter()
-            .map(|(reference, local)| format!("+{reference}*:{local}*")),
-    );
+    let plan = Plan::of(&first)?;
     let named = change.map(str::to_owned).or_else(|| first.view_change(dir));
-    let now = crate::live::unix_now();
-    if let Some(at) = sweep::window(
-        &first.git,
-        &first.common_dir,
-        first.remote(),
-        &refspecs,
-        now,
-    ) && let Some(refreshed) = windowed(&first, named.clone(), held.clone(), at)
+    if let Some(at) = plan.window(&first)
+        && let Some(refreshed) = local_read(
+            &first,
+            named.clone(),
+            plan.held.clone(),
+            Some(at),
+            true,
+            talk_now,
+        )
     {
         return Some(Ok((first, refreshed)));
     }
-    let swept = sweep::sweep(&first.git, first.remote(), &refspecs).ok()?;
-    let trunk = swept
-        .remote_of(&tracking, held.as_deref())
-        .map(str::to_owned)?;
-    let (common, remote) = (first.common_dir.clone(), first.remote().to_owned());
-    let settled = settle_swept(dir, change, first, &swept, &targets, trunk);
-    // Only a listing settles every live chain, so only a listing's sweep serves the reads after
-    // it.
-    if named.is_none() && settled.is_ok() {
-        sweep::remember(&common, &remote, &refspecs, &swept);
-    }
-    Some(settled)
+    let until = holds_named(&first, named.as_deref()).then_some(until);
+    let sweep = match crate::sweeper::start(dir, change, until) {
+        Answer::Done {
+            at,
+            targets,
+            talk_accept,
+        } => return swept_read(dir, named, at, targets, move |_| talk_accept),
+        Answer::Open => {
+            let (at, _) = sweep::last(&first.common_dir)?;
+            return swept_read(dir, named, at, true, talk_now);
+        }
+        Answer::Busy(running) => {
+            let ended = crate::sweeper::wait_ended(&first.common_dir, &running, until);
+            let since = running["since"].as_u64().unwrap_or(u64::MAX);
+            if let Some((at, _)) = sweep::last(&first.common_dir).filter(|(_, unix)| *unix >= since)
+                && ended
+            {
+                return swept_read(dir, named, at, true, talk_now);
+            }
+            json!({"state": "running", "by": running})
+        }
+        Answer::Late(pid) => json!({"state": "started", "by": {"pid": pid}}),
+        Answer::Lost => json!({"state": "ended without an answer"}),
+        Answer::Unserved => return None,
+        Answer::Failed(message) => return Some(Err(Box::new(BayResult::failed(message)))),
+    };
+    stale_read(first, &plan, named, started, &sweep)
 }
 
-/// G617: what [`fetch_swept`] refreshes, inside the window of a listing's sweep
-/// ([`sweep::window`]): the store as that sweep at `at` left it, and no remote asked; the trunk
-/// is `held`, this store's. `None` when the window cannot serve the read: the store holds no
-/// trunk, or no chain of the change the read names, which then comes from the remote.
-fn windowed(
+/// § 11c: a fetching command accepts and acks this actor's talks, once a poll interval.
+fn talk_now(repo: &Repo) -> Option<Value> {
+    crate::talk::poll::command(repo, crate::live::unix_now())
+}
+
+/// The read after a sweep that ended at `at`: the store opened again, since the sweep may have
+/// moved its trunk and so its config.
+fn swept_read(
+    dir: &Path,
+    named: Option<String>,
+    at: String,
+    targets: bool,
+    talk: impl FnOnce(&Repo) -> Option<Value>,
+) -> Option<Result<(Repo, Refreshed), Box<BayResult>>> {
+    let repo = match Repo::open_with(dir, crate::repo::Fetch::Never) {
+        Ok(repo) => repo,
+        Err(error) => return Some(Err(Box::new(error.into_result()))),
+    };
+    let held = repo.git.ref_target(&repo.trunk_tracking_ref()).ok()?;
+    let refreshed = local_read(&repo, named, held, Some(at), targets, talk)?;
+    Some(Ok((repo, refreshed)))
+}
+
+/// G619: the read when the sweep has not ended by the deadline: the store as the last sweep left
+/// it, its time as `fetched_at`, how old it is (`stale_s`), and a `stale_read` warning naming
+/// the sweep (`sweep`) and how long the read waited (`waited_ms`). The targets read as not
+/// fetched; no talk is accepted (the sweep accepts them).
+fn stale_read(
+    first: Repo,
+    plan: &Plan,
+    named: Option<String>,
+    started: Instant,
+    sweep: &Value,
+) -> Option<Result<(Repo, Refreshed), Box<BayResult>>> {
+    let (at, unix) = sweep::last(&first.common_dir).unzip();
+    let stale_s = unix.map(|unix| crate::live::unix_now().saturating_sub(unix));
+    let none = |_: &Repo| None;
+    let mut refreshed = local_read(&first, named, plan.held.clone(), at.clone(), false, none)?;
+    refreshed.fetched_unix = unix;
+    refreshed.stale = Some(json!({
+        "code": "stale_read",
+        "fetched_at": at,
+        "stale_s": stale_s,
+        "waited_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "sweep": sweep,
+        "note": "the remote sweep had not ended by this read's deadline: this is the store as the last sweep left it; the sweep runs on, and a read after it ends shows what it brought",
+    }));
+    Some(Ok((first, refreshed)))
+}
+
+/// What [`fetch_swept`] refreshes from the store alone: as the sweep at `at` left it, the trunk
+/// `held`, the targets read as `targets` says, and the talks `talk` accepts. `None` when the
+/// store cannot serve the read: it holds no trunk, or no chain of the change the read names,
+/// which then comes from the remote.
+fn local_read(
     repo: &Repo,
     named: Option<String>,
     held: Option<String>,
-    at: String,
+    at: Option<String>,
+    targets: bool,
+    talk: impl FnOnce(&Repo) -> Option<Value>,
 ) -> Option<Refreshed> {
     let trunk = held?;
     let chain = Chain::new(&repo.git);
@@ -550,15 +700,91 @@ fn windowed(
     };
     // The sweep brought the evidence notes red, flakes, post checks and targets judge.
     repo.swept_evidence();
+    let fetched_unix = at
+        .as_ref()
+        .and_then(|_| sweep::last(&repo.common_dir))
+        .map(|(_, unix)| unix);
     Some(Refreshed {
         trunk,
-        fetched_at: Some(at),
+        fetched_at: at,
+        fetched_unix,
         ids,
-        targets: true,
-        // § 11c: a fetching command accepts and acks this actor's talks, once a poll interval.
-        talk_accept: crate::talk::poll::command(repo, crate::live::unix_now()),
+        targets,
+        talk_accept: talk(repo),
+        stale: None,
     })
 }
+
+/// G619: `bay sweep [change]`, the sweep a status read starts ([`crate::sweeper`]): under the
+/// store's sweep lock, sweeps the remote, settles the store ([`settle_swept`]) and records the
+/// sweep, then prints one JSON line of what it did (`done`, `open`, `busy`, `unserved` or
+/// `failed`) for the read, which may have answered and left by then.
+pub fn sweep_child(dir: &Path, change: Option<&str>) {
+    use std::io::Write as _;
+    let answer = swept_answer(dir, change);
+    let mut out = std::io::stdout().lock();
+    // The read that started this sweep may have left: then no one reads the answer.
+    let _ = writeln!(out, "{answer}").and_then(|()| out.flush());
+}
+
+fn swept_answer(dir: &Path, change: Option<&str>) -> Value {
+    let Ok(first) = Repo::open_with(dir, crate::repo::Fetch::Never) else {
+        return json!({"unserved": "the repository cannot be opened"});
+    };
+    let Some(plan) = Plan::of(&first) else {
+        return json!({"unserved": "no config at the trunk this store holds"});
+    };
+    let lock = match sweep::lock(&first.common_dir) {
+        Ok(Ok(lock)) => lock,
+        Ok(Err(running)) => return json!({ "busy": running }),
+        Err(why) => return json!({ "unserved": why }),
+    };
+    let named = change.map(str::to_owned).or_else(|| first.view_change(dir));
+    if plan.window(&first).is_some() && holds_named(&first, named.as_deref()) {
+        lock.end();
+        return json!({"open": true});
+    }
+    test_delay();
+    let Ok(swept) = sweep::sweep(&first.git, first.remote(), &plan.refspecs) else {
+        lock.end();
+        return json!({"unserved": "the remote sweep failed"});
+    };
+    let Some(trunk) = swept
+        .remote_of(&plan.tracking, plan.held.as_deref())
+        .map(str::to_owned)
+    else {
+        lock.end();
+        return json!({"unserved": "the remote holds no trunk"});
+    };
+    let (common, remote) = (first.common_dir.clone(), first.remote().to_owned());
+    let answer = match settle_swept(dir, change, first, &swept, &plan.targets, trunk) {
+        Ok((_, refreshed)) => {
+            sweep::remember(&common, &remote, &plan.refspecs, &swept);
+            json!({"done": {
+                "at": swept.at,
+                "targets": refreshed.targets,
+                "talk_accept": refreshed.talk_accept,
+            }})
+        }
+        Err(refused) => json!({ "failed": refused.detail }),
+    };
+    lock.end();
+    answer
+}
+
+/// In a test build, `BAY_TEST_SWEEP_DELAY_MS` holds the sweep that long before it asks the
+/// remote: a sweep slower than a read's deadline.
+fn test_delay() {
+    if let Some(delay) = std::env::var("BAY_TEST_SWEEP_DELAY_MS")
+        .ok()
+        .filter(|_| TEST_HOOKS)
+        .and_then(|text| text.parse().ok())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+    }
+}
+
+const TEST_HOOKS: bool = option_env!("BAY_RELEASE_VERSION").is_none();
 
 /// The local half of [`fetch_swept`]: the moves `swept` found, each namespace by its rule.
 fn settle_swept(
@@ -632,15 +858,18 @@ fn settle_swept(
     let refreshed = Refreshed {
         trunk,
         fetched_at: Some(swept.at.clone()),
+        fetched_unix: Some(swept.unix),
         ids: ids.map_err(|message| Box::new(BayResult::failed(message)))?,
         targets: targets_fetched,
         talk_accept,
+        stale: None,
     };
     Ok((repo, refreshed))
 }
 
-fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
-    let (repo, refreshed) = match fetch_swept(dir, change) {
+fn run(dir: &Path, change: Option<&str>, deadline: Duration) -> Result<BayResult, String> {
+    let started = Instant::now();
+    let (repo, refreshed) = match fetch_swept(dir, change, started, started + deadline) {
         Some(Ok(swept)) => swept,
         Some(Err(refused)) => return Ok(*refused),
         None => {
@@ -658,9 +887,11 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
     let Refreshed {
         trunk,
         fetched_at,
+        fetched_unix,
         ids,
         targets: targets_fetched,
         talk_accept,
+        stale,
     } = refreshed;
     // The runtime adapter is asked only for a change this read names: a listing of every
     // change stays bounded however many have landed.
@@ -709,7 +940,15 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
     if let (Some(detail), Some(hold)) = (result.detail.as_mut(), sections.hold) {
         detail["hold"] = hold.to_json();
     }
-    let mut warnings = sections.runner;
+    // G619: every read names how old its view of the remote is.
+    if let Some(detail) = result.detail.as_mut() {
+        detail["fetched_at"] = json!(fetched_at);
+        detail["stale_s"] =
+            json!(fetched_unix.map(|unix| crate::live::unix_now().saturating_sub(unix)));
+    }
+    let stale_read = stale.is_some();
+    let mut warnings: Vec<Value> = stale.into_iter().collect();
+    warnings.extend(sections.runner);
     warnings.extend(sections.not_linear);
     warnings.extend(sections.wake_failing);
     if let Some(detail) = result.detail.as_mut()
@@ -722,7 +961,14 @@ fn run(dir: &Path, change: Option<&str>) -> Result<BayResult, String> {
     }
     result.freshness = Some(Freshness {
         trunk,
-        fetched_at: fetched_at.unwrap_or_else(|| "not fetched (remote unreachable)".to_owned()),
+        fetched_at: fetched_at.unwrap_or_else(|| {
+            if stale_read {
+                CACHED
+            } else {
+                "not fetched (remote unreachable)"
+            }
+            .to_owned()
+        }),
     });
     Ok(result)
 }

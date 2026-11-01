@@ -1,6 +1,7 @@
 use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
@@ -164,6 +165,11 @@ enum Command {
         /// merged outside bay, and the count of commits off the first-parent line
         #[arg(long, requires = "since")]
         merged: bool,
+        /// Wait at most this long for the remote (default 3); past it, answer from the local
+        /// store as the last sweep left it, named by `detail.stale_s` and a `stale_read` warning
+        #[arg(long, value_name = "SECONDS",
+            conflicts_with_all = ["all", "lineage", "branches", "since"])]
+        deadline: Option<u64>,
     },
     /// The live line, head first: each place's change, intent, actor, paths, wait, operation
     /// state and runner, as one `bay.queue/1` document in `detail`. Reads the live places and
@@ -209,6 +215,10 @@ enum Command {
         #[command(subcommand)]
         action: RunnerAction,
     },
+    /// The remote sweep a status read starts, under the store's sweep lock; prints one line
+    /// for that read
+    #[command(hide = true)]
+    Sweep { change: Option<String> },
     /// This machine's live summary ref (started by the agent hook once per heartbeat)
     #[command(hide = true)]
     Live {
@@ -658,6 +668,7 @@ fn config_refusal(cli: &Cli) -> Option<BayResult> {
             | Command::Install(_)
             | Command::Update { .. }
             | Command::Hook { .. }
+            | Command::Sweep { .. }
             | Command::Plugin { .. }
             | Command::Assets {
                 action: AssetsAction::Store { .. }
@@ -924,6 +935,10 @@ fn main() -> ExitCode {
             action: RunnerAction::Drain { cancel },
         } => bay::executor::drain(&cli.dir, cancel),
         Command::Live { action } => live(&cli.dir, action),
+        Command::Sweep { change } => {
+            bay::status::sweep_child(&cli.dir, change.as_deref());
+            return ExitCode::SUCCESS;
+        }
         command @ Command::Status { .. } => status(&cli.dir, command),
         Command::Queue => bay::line::queue(&cli.dir),
         // The one prune: the request `status --branches` makes, deleting (G302).
@@ -1035,6 +1050,7 @@ fn status(dir: &std::path::Path, command: Command) -> BayResult {
         stale_days,
         since,
         merged,
+        deadline,
     } = command
     else {
         unreachable!("status takes a status command");
@@ -1060,7 +1076,8 @@ fn status(dir: &std::path::Path, command: Command) -> BayResult {
     if let Some(range) = lineage {
         return bay::lineage::lineage(dir, Some(range.as_str()));
     }
-    let result = bay::status::status(dir, change.as_deref());
+    let deadline = deadline.map_or_else(bay::status::default_deadline, Duration::from_secs);
+    let result = bay::status::status(dir, change.as_deref(), deadline);
     bay::update::auto();
     result
 }

@@ -1049,6 +1049,24 @@ fn trace_file() -> Option<&'static Path> {
     .as_deref()
 }
 
+/// The pid a trace line names: this process's, or the command's that started it as part of its
+/// own work (G619: the sweep a status read starts, [`trace_child`]).
+fn trace_pid() -> u32 {
+    std::env::var("BAY_TEST_TRACE_PID")
+        .ok()
+        .filter(|_| TEST_HOOKS)
+        .and_then(|pid| pid.parse().ok())
+        .unwrap_or_else(std::process::id)
+}
+
+/// Has the `bay` that `cmd` starts as part of this command's work trace its git spawns as this
+/// command's, when they are traced.
+pub(crate) fn trace_child(cmd: &mut Command) {
+    if trace_file().is_some() {
+        cmd.env("BAY_TEST_TRACE_PID", trace_pid().to_string());
+    }
+}
+
 /// G171: appends the trace line of one `git` spawn of `cmd` that started at `started` and
 /// ended with `code`, when `BAY_TEST_GIT_TRACE` names a file. Any other program is not
 /// traced. The line goes out in one write, so lines from concurrent calls do not interleave.
@@ -1071,7 +1089,7 @@ pub(crate) fn trace(cmd: &Command, started: Instant, code: Option<i32>) {
         "us": micros,
         "end": end,
         "exit": code,
-        "pid": std::process::id(),
+        "pid": trace_pid(),
     })
     .to_string();
     line.push('\n');

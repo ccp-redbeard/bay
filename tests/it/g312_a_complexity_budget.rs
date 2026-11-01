@@ -63,8 +63,11 @@ use support::TestBox;
 /// - 0.6.12, one command and one flag (`runner drain`, `--cancel`, G589): a restart to bring a
 ///   runner new settings ended it by signal inside the check it ran; now one command asks it to
 ///   stop between operations, and `--cancel` takes the ask back.
+/// - 0.6.21, one flag (`status --deadline`, G619): at a high load a status read waited for its
+///   sweep of the remote (about 34 s), and every seat's `bay status` timed out by its caller; now
+///   it answers by its deadline from the store and names how old that is.
 const COMMANDS: usize = 30;
-const FLAGS: usize = 91;
+const FLAGS: usize = 92;
 /// - 0.3.3, one reason (`REGISTRY_UNREADABLE`): a registry no version rule allows made every
 ///   command fail with a raw error; doctor now names it and the repair.
 /// - 0.4.0, one reason (`LOCK_NOT_HELD`, BACKLOG 57): an edit of a file that never merges,

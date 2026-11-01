@@ -80,6 +80,7 @@ pub mod start;
 pub mod status;
 pub mod stranded;
 pub mod sweep;
+pub mod sweeper;
 pub mod talk;
 pub mod target;
 pub mod throughput;

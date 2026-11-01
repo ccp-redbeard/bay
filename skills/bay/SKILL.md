@@ -150,6 +150,10 @@ session is being told of its refusals; `waiting_for` says what a queued change w
   been seen recently. Tell the user a runner must run (`bay runner run`, or
   `bay runner install` to keep one running). The work stays queued. The agent hook says the
   same once, at session start or a prompt: "bay: no runner is running for this repository".
+- `bay status` waits for the remote at most `--deadline` seconds (default 3). Past it, the read
+  answers from the store as the last sweep left it: `detail.stale_s` says how old that is, and a
+  `stale_read` warning names the sweep that runs on. Read again a little later for a fresh answer;
+  do not raise the deadline to wait it out.
 - `bay status` with `detail.warnings` naming `main_not_linear`: a merge pushed outside bay put
   merges off main's first-parent line. bay still finds them. Tell the user to require linear
   history on the host.

@@ -130,6 +130,88 @@ fn record(common: &Path) -> PathBuf {
     common.join("bay").join("swept.json")
 }
 
+/// G619: the lock file of the store's sweep. The one process that sweeps the store holds it for
+/// its whole life, and writes in it its pid, its start (`since`) and, as it ends, `ended`.
+fn lock_file(common: &Path) -> PathBuf {
+    common.join("bay").join("sweep.lock")
+}
+
+/// The sweep lock of a store, held while this lives ([`lock`]).
+pub struct Lock {
+    file: std::fs::File,
+    since: u64,
+}
+
+impl Lock {
+    /// Writes that this sweep has ended, then lets the lock go.
+    pub fn end(mut self) {
+        let ended = crate::live::unix_now();
+        let text = json!({"pid": std::process::id(), "since": self.since, "ended": ended});
+        let _ = write_lock(&mut self.file, &text);
+    }
+}
+
+fn write_lock(file: &mut std::fs::File, text: &Value) -> std::io::Result<()> {
+    use std::io::{Seek as _, Write as _};
+    file.set_len(0)?;
+    file.rewind()?;
+    file.write_all(text.to_string().as_bytes())
+}
+
+/// Takes the sweep lock of the store whose common directory is `common`: `Ok(Ok(lock))` when
+/// this process holds it now, `Ok(Err(running))` when another sweep holds it, with what that
+/// sweep wrote in it ([`running`]).
+///
+/// # Errors
+///
+/// The lock file cannot be opened or locked.
+pub fn lock(common: &Path) -> Result<Result<Lock, Value>, String> {
+    let path = lock_file(common);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => {
+            let since = crate::live::unix_now();
+            let _ = write_lock(
+                &mut file,
+                &json!({"pid": std::process::id(), "since": since}),
+            );
+            Ok(Ok(Lock { file, since }))
+        }
+        Err(std::fs::TryLockError::WouldBlock) => Ok(Err(running(common))),
+        Err(std::fs::TryLockError::Error(error)) => {
+            Err(format!("cannot lock {}: {error}", path.display()))
+        }
+    }
+}
+
+/// What the store's last sweep wrote in its lock file: `{pid, since}`, and `ended` once it has
+/// ended; `null` when nothing readable is there (a sweep that is writing it, or none ever ran).
+#[must_use]
+pub fn running(common: &Path) -> Value {
+    std::fs::read_to_string(lock_file(common))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// The last sweep this store recorded ([`remember`]), whatever its window: its time `at` and its
+/// start `unix`.
+#[must_use]
+pub fn last(common: &Path) -> Option<(String, u64)> {
+    let text = std::fs::read_to_string(record(common)).ok()?;
+    let held: Value = serde_json::from_str(&text).ok()?;
+    Some((held["at"].as_str()?.to_owned(), held["unix"].as_u64()?))
+}
+
 /// The marks of the store's pushes ([`pushed`]), one file each, named `<unix>-<pid>-<n>`.
 fn push_marks(common: &Path) -> PathBuf {
     common.join("bay").join("swept-pushes")

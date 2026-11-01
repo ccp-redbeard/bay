@@ -244,6 +244,8 @@ impl TestBox {
             .env("BAY_TEST_TALK_COMMAND_UNBOUNDED", "1")
             // Every status read asks the remote: only G617 opens the window a sweep serves.
             .env("BAY_TEST_SWEPT_S", "0")
+            // A read waits for its sweep: only G619 reads past a deadline.
+            .env("BAY_TEST_STATUS_DEADLINE_S", "600")
             // The host's user-namespace restriction never reaches a test: see `userns_restricted`.
             .env(
                 "BAY_TEST_USERNS_RESTRICT",
@@ -264,6 +266,7 @@ impl TestBox {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CEILING_DIRECTORIES", self.path())
             .env("BAY_TEST_SWEPT_S", "0")
+            .env("BAY_TEST_STATUS_DEADLINE_S", "600")
             // The host's user-namespace restriction never reaches a test: see `userns_restricted`.
             .env(
                 "BAY_TEST_USERNS_RESTRICT",
@@ -280,6 +283,7 @@ impl TestBox {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CEILING_DIRECTORIES", self.path())
             .env("BAY_TEST_SWEPT_S", "0")
+            .env("BAY_TEST_STATUS_DEADLINE_S", "600")
             // The host's user-namespace restriction never reaches a test: see `userns_restricted`.
             .env(
                 "BAY_TEST_USERNS_RESTRICT",
