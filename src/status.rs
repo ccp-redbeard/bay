@@ -41,7 +41,8 @@ use crate::view;
 /// G619: how long, in seconds, a status read waits for the remote by default before it answers
 /// from the store ([`fetch_swept`]). The local read after it is not bounded by it: on a store of
 /// 3,490 chains, at load 63-80 on 14 cores, a read served from a sweep took 4.5-7.9 s in all
-/// before G624 cut its git work (2026-11-01).
+/// before G624 cut its git work (2026-11-01). After it, the same read used 3.2-3.4 s of CPU
+/// against 3.75-3.9 s; its wall time, at load 59-75, stayed in the noise (3.5-8.1 s).
 pub const STATUS_DEADLINE_S: u64 = 3;
 
 /// The deadline of a read that names none: [`STATUS_DEADLINE_S`], or in a test build
