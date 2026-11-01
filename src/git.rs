@@ -1071,6 +1071,13 @@ pub(crate) fn trace_child(cmd: &mut Command) {
 /// ended with `code`, when `BAY_TEST_GIT_TRACE` names a file. Any other program is not
 /// traced. The line goes out in one write, so lines from concurrent calls do not interleave.
 pub(crate) fn trace(cmd: &Command, started: Instant, code: Option<i32>) {
+    trace_input(cmd, started, code, None);
+}
+
+/// [`trace`] of a spawn that read `input` on stdin: the line also names the thread that ran it
+/// and how many lines of input it read, with their hash, so a trace shows which calls of a
+/// command repeat the same read (G624).
+fn trace_input(cmd: &Command, started: Instant, code: Option<i32>, input: Option<&[u8]>) {
     let Some(file) = trace_file() else {
         return;
     };
@@ -1090,6 +1097,16 @@ pub(crate) fn trace(cmd: &Command, started: Instant, code: Option<i32>) {
         "end": end,
         "exit": code,
         "pid": trace_pid(),
+        "thread": format!("{:?}", thread::current().id()),
+        "input": input.map(|bytes| {
+            use std::hash::{Hash as _, Hasher as _};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            serde_json::json!({
+                "lines": bytes.iter().filter(|&&byte| byte == b'\n').count(),
+                "hash": format!("{:016x}", hasher.finish()),
+            })
+        }),
     })
     .to_string();
     line.push('\n');
@@ -1469,13 +1486,14 @@ pub fn run_bounded_for(
     if writes_config(&cmd) {
         CONFIG_WRITES.fetch_add(1, Ordering::SeqCst);
     }
-    trace(
+    trace_input(
         &cmd,
         started,
         status
             .as_ref()
             .ok()
             .and_then(std::process::ExitStatus::code),
+        input,
     );
     let status = status?;
     if let Some(handle) = stdin_handle {
