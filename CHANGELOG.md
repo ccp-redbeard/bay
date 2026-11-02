@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.23
+
+- A post check's failure that a rerun follows says so in its record, and when the last rerun is due.
+- Until then a red judgement reads the check as not yet answered: no red, hold or culprit.
+- The rerun's pass makes the check flaky; its failure opens the red as before.
+- A rerun whose record never comes, as when its runner died, opens the red once it is due.
+
 ## 0.6.22
 
 - With a footprint, a red names no culprit when the pass and the first failure read the same bytes.
