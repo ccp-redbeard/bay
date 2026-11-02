@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::config::{Config, Freeze, Target};
-use crate::evidence::{self, CheckId, Combined};
+use crate::evidence::{self, CheckId};
 use crate::git::Git;
 use crate::registry::Registry;
 use crate::repo::Repo;
@@ -291,6 +291,7 @@ pub fn checks(
         )?;
         records.extend(carried.records);
     }
+    let now = crate::evidence::reader_now();
     let mut out = Vec::new();
     for id in requires {
         let entries: Vec<&crate::policy::CheckEntry> = policy
@@ -310,21 +311,8 @@ pub fn checks(
             }
             let check = CheckId::new(&entry.id, &entry.environment);
             let subject = policy.commit_keyed(&check).then_some(commit);
-            let state = match evidence::combine(&records, &check, &policy.manifest_digest, subject)
-            {
-                Combined::Pass => "pass",
-                Combined::ProductFailure => "product_failure",
-                Combined::Flaky => "flaky",
-                Combined::Unknown => {
-                    let recorded = records.iter().any(|record| {
-                        record.kind == evidence::KIND_CHECK
-                            && record.check == check
-                            && record.manifest_digest == policy.manifest_digest
-                            && subject.is_none_or(|commit| record.subject.commit == commit)
-                    });
-                    if recorded { "unknown" } else { "pending" }
-                }
-            };
+            let (state, _) =
+                evidence::answer(&records, &check, &policy.manifest_digest, subject, now);
             out.push(json!({"check": entry.id, "environment": entry.environment, "state": state}));
         }
     }

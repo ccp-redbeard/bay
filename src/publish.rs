@@ -8366,6 +8366,7 @@ fn answers_of(
     registry: Option<&crate::registry::Registry>,
     recorded: bool,
 ) -> Result<Vec<serde_json::Value>, String> {
+    let now = crate::evidence::reader_now();
     // G163: only records from the producers a check lists answer it.
     let records = policy.answering(evidence::counted(git, records, registry)?);
     let mut out = Vec::new();
@@ -8385,26 +8386,20 @@ fn answers_of(
             continue;
         }
         let subject = policy.commit_keyed(&id).then_some(commit);
-        let state = match evidence::combine(&records, &id, &policy.manifest_digest, subject) {
-            Combined::Pass => "pass",
-            Combined::ProductFailure => "product_failure",
-            Combined::Flaky => "flaky",
-            // Only an `unknown` or `infra_failure` record, or none: nothing has answered it.
-            Combined::Unknown => {
-                let recorded = records.iter().any(|record| {
-                    record.kind == evidence::KIND_CHECK
-                        && record.check == id
-                        && record.manifest_digest == policy.manifest_digest
-                        && subject.is_none_or(|commit| record.subject.commit == commit)
-                });
-                if recorded { "unknown" } else { "pending" }
-            }
-        };
+        let (state, due) = evidence::answer(&records, &id, &policy.manifest_digest, subject, now);
         row["state"] = json!(state);
+        if let Some(due) = due {
+            row[RERUN_DUE] = json!(crate::clock::rfc3339_of(due));
+        }
         out.push(row);
     }
     Ok(out)
 }
+
+/// G628: the answer row field of a post check that is `pending` because its failure waits for a
+/// rerun ([`evidence::answer`]): when the first of those reruns is due, in RFC 3339. Past it, the
+/// failure is the check's answer.
+pub const RERUN_DUE: &str = "rerun_due";
 
 /// The compact terminal record that outlives the drafts (§ 9a). Written once per operation.
 fn write_terminal(

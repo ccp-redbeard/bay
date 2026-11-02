@@ -581,6 +581,30 @@ struct Last {
     judged: Option<Judged>,
     /// S4: the post answers it read, by landing commit ([`Answered`]).
     answers: Answered,
+    /// G628: the first time an answer it read waits for a rerun until ([`rerun_due`]): from
+    /// then on, the same tips are judged again.
+    due: Option<u64>,
+}
+
+impl Last {
+    fn new(key: String, judgement: Judgement, judged: Option<Judged>, answers: Answered) -> Self {
+        let due = answers.values().filter_map(|rows| rerun_due(rows)).min();
+        Self {
+            key,
+            judgement,
+            judged,
+            answers,
+            due,
+        }
+    }
+
+    /// Whether this judgement still stands for the tips `key` at Unix time `now`: the same tips,
+    /// and no answer it read waits for a rerun due by `now` (G628). A runner judges again and
+    /// again in one process; without the time, a rerun that never answers would leave its red
+    /// closed until main or a note moved.
+    fn stands(&self, key: &str, now: u64) -> bool {
+        self.key == key && self.due.is_none_or(|due| now < due)
+    }
 }
 
 /// S4: the post answers a judgement read, by landing commit. A landing's answers change only
@@ -588,6 +612,14 @@ struct Last {
 /// the registry), so the next judgement reads again only the landings whose notes moved, and
 /// those newer than the last one judged.
 type Answered = std::collections::HashMap<String, Vec<Value>>;
+
+/// G628: the first time a row of `rows` waits for a rerun until ([`crate::publish::RERUN_DUE`]).
+fn rerun_due(rows: &[Value]) -> Option<u64> {
+    rows.iter()
+        .filter_map(|row| row[crate::publish::RERUN_DUE].as_str())
+        .filter_map(crate::clock::unix_of)
+        .min()
+}
 
 /// The red checks of `trunk` (G244). A pending check is not among them: it refuses nothing.
 ///
@@ -746,7 +778,9 @@ fn judged_from(
     );
     let (before, answers) = match LAST.lock() {
         Ok(mut last) => match last.as_mut() {
-            Some(last) if last.key == key => return Ok(last.judgement.clone()),
+            Some(last) if last.stands(&key, crate::evidence::reader_now()) => {
+                return Ok(last.judgement.clone());
+            }
             Some(last) => (last.judged.clone(), std::mem::take(&mut last.answers)),
             None if shared => saved(git).map_or((None, Answered::new()), |saved| {
                 (Some(saved.judged), saved.answers)
@@ -760,12 +794,7 @@ fn judged_from(
         save(git, judged, &answers);
     }
     if let Ok(mut last) = LAST.lock() {
-        *last = Some(Last {
-            key,
-            judgement: judgement.clone(),
-            judged,
-            answers,
-        });
+        *last = Some(Last::new(key, judgement.clone(), judged, answers));
     }
     Ok(judgement)
 }
@@ -985,8 +1014,24 @@ fn judge_from(
     // The tips before the answers: a record written in between reads as moved next time.
     let evidence = evidence_tips(git)?;
     let line = line(git, trunk, window)?;
+    let now = crate::evidence::reader_now();
     let known = before.and_then(|before| {
-        moved(git, before, &evidence, registry, &line.landings, window).map(|moved| (before, moved))
+        moved(git, before, &evidence, registry, &line.landings, window).map(|mut moved| {
+            // G628: an answer that waited for a rerun due by now is read again, as if its notes
+            // moved: past that time the failure is its answer.
+            moved.trees.extend(
+                line.landings
+                    .iter()
+                    .filter(|landing| {
+                        answers
+                            .get(&landing.commit)
+                            .and_then(|rows| rerun_due(rows))
+                            .is_some_and(|due| due <= now)
+                    })
+                    .map(|landing| landing.tree.clone()),
+            );
+            (before, moved)
+        })
     });
     // S4: only under a judgement `moved` can compare with (the same registry, window and
     // producers), and only for a landing it judged whose notes did not move.
@@ -1701,4 +1746,41 @@ fn line(git: &Git, trunk: &str, window: usize) -> Result<Line, String> {
         depth,
         full: depth >= window,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Answered, Judgement, Last};
+    use serde_json::json;
+
+    fn last(answers: Answered) -> Last {
+        Last::new("tips".to_owned(), Judgement::default(), None, answers)
+    }
+
+    #[test]
+    fn a_judgement_stands_for_its_tips_until_the_first_rerun_it_waited_for_is_due() {
+        // GIVEN answers on two landings, two of whose rows wait for a rerun.
+        let answers = Answered::from([
+            (
+                "c1".to_owned(),
+                vec![
+                    json!({"state": "pass"}),
+                    json!({"state": "pending", "rerun_due": "2027-01-15T08:00:00Z"}),
+                ],
+            ),
+            (
+                "c2".to_owned(),
+                vec![json!({"state": "pending", "rerun_due": "2027-01-15T08:00:10Z"})],
+            ),
+        ]);
+        let due = crate::clock::unix_of("2027-01-15T08:00:00Z").unwrap();
+        let judged = last(answers);
+
+        // THEN it stands for its tips until the first of them is due, and never for other tips.
+        assert!(judged.stands("tips", due - 1));
+        assert!(!judged.stands("tips", due));
+        assert!(!judged.stands("other tips", due - 1));
+        // AND with no rerun to wait for, it stands for its tips at any time.
+        assert!(last(Answered::new()).stands("tips", u64::MAX));
+    }
 }

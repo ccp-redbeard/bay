@@ -903,6 +903,10 @@ struct Plan {
 /// The one recorded value of `plan.selection` (`INTERFACES` § 7).
 pub const DECLARED_EMPTY: &str = "declared_empty";
 
+/// G628: past the reruns' own bounds, how long a post check's last rerun record may take to
+/// reach another box: the runner pushes evidence once a pass ends.
+const RERUN_MARGIN_S: u64 = 300;
+
 /// G540: the record field naming the units of the request's `rerun` the adapter no longer has,
 /// as its `plan.gone` named them. Absent when it named none.
 pub const GONE: &str = "gone";
@@ -1185,7 +1189,7 @@ fn run_in_slot(shared: Shared, (index, entry): (usize, &CheckEntry)) -> Result<S
             unavailable = Some(reason);
             break;
         }
-        let record = evidence(
+        let mut record = evidence(
             shared.candidate,
             shared.producer,
             shared.policy,
@@ -1194,6 +1198,7 @@ fn run_in_slot(shared: Shared, (index, entry): (usize, &CheckEntry)) -> Result<S
             ran,
             &shared.limits.sandbox,
         );
+        stamp_rerun(&mut record, entry, run);
         let verdict = record.verdict;
         failed = failed_ids(&record);
         runs.push(record);
@@ -1445,6 +1450,7 @@ fn run_serial(
             ran,
             &limits.sandbox,
         );
+        stamp_rerun(&mut record, entry, run);
         // N-3: the record names the base record it was judged against, and each unit that
         // failed on both, so its verdict is auditable.
         if let Some(compared) = compared {
@@ -1699,6 +1705,31 @@ fn evidence(
         signature: None,
         unknown,
     }
+}
+
+/// G628 (a fleet finding, 2026-11-02: a post check's first failure was kept, judged red and its
+/// red told to a merge three minutes before its rerun passed): the `run`th run of the post check
+/// `entry` that failed, with a rerun to follow (`retry_on_failure`), says so in `record`, and
+/// when the last rerun's record is due. Until then a red judgement reads it as no answer yet
+/// ([`crate::evidence::answer`]). A run on the base is never rerun, so it is never stamped.
+fn stamp_rerun(record: &mut EvidenceRecord, entry: &CheckEntry, run: u32) {
+    if entry.stage != crate::policy::Stage::Post
+        || record.verdict != Verdict::ProductFailure
+        || run >= entry.retry_on_failure
+    {
+        return;
+    }
+    let left = entry.retry_on_failure - run;
+    let each = entry
+        .timeout_s
+        .saturating_add(entry.materialize_timeout_s.0);
+    let until = crate::live::unix_now()
+        .saturating_add(u64::from(left).saturating_mul(each))
+        .saturating_add(RERUN_MARGIN_S);
+    record.unknown.insert(
+        crate::evidence::RERUN.to_owned(),
+        json!({"left": left, "until": crate::clock::rfc3339_of(until)}),
+    );
 }
 
 /// The evidence id of run `run` of the check at `index` of the policy on `candidate`: the first

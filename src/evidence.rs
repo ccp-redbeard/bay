@@ -994,6 +994,86 @@ pub fn combine(
     }
 }
 
+/// G628: the record field of a post check's `product_failure` that a rerun of the same run
+/// follows (`retry_on_failure`): `{"left": <reruns left>, "until": <RFC 3339>}`, the time by
+/// which the last rerun's record is due. Absent on any other record, and on every record of a
+/// bay older than 0.6.23.
+pub const RERUN: &str = "rerun";
+
+/// Test builds honour `BAY_TEST_RERUN_CLOCK_SKEW_S`; a release build never does.
+const TEST_HOOKS: bool = option_env!("BAY_RELEASE_VERSION").is_none();
+
+/// G628: the reader's clock for a rerun's due time ([`RERUN`]): this machine's, or in a test
+/// build moved forward by `BAY_TEST_RERUN_CLOCK_SKEW_S` seconds, so a test reads a rerun that
+/// never came as a reader past its due time would.
+#[must_use]
+pub fn reader_now() -> u64 {
+    let skew = std::env::var("BAY_TEST_RERUN_CLOCK_SKEW_S")
+        .ok()
+        .filter(|_| TEST_HOOKS)
+        .and_then(|text| text.parse::<u64>().ok())
+        .unwrap_or(0);
+    crate::live::unix_now().saturating_add(skew)
+}
+
+/// How `records` answer `check` (as [`combine`] reads them) at Unix time `now`, as a state:
+/// `pass`, `product_failure`, `flaky`, `unknown` when only records that answer nothing name it,
+/// or `pending` when no record names it. G628: a `product_failure` whose every record is a
+/// failure that waits for a rerun due after `now` ([`RERUN`]) is `pending` too, with the time
+/// the first of those reruns is due: its rerun may still pass. A run's last record never waits,
+/// whatever its verdict, so one such record means a run ended and its answer stands.
+#[must_use]
+pub fn answer(
+    records: &[EvidenceRecord],
+    check: &CheckId,
+    manifest_digest: &str,
+    subject_commit: Option<&str>,
+    now: u64,
+) -> (&'static str, Option<u64>) {
+    let named = || {
+        records.iter().filter(|record| {
+            record.kind == KIND_CHECK
+                && &record.check == check
+                && record.manifest_digest == manifest_digest
+                && subject_commit.is_none_or(|commit| record.subject.commit == commit)
+        })
+    };
+    match combine(records, check, manifest_digest, subject_commit) {
+        Combined::Pass => ("pass", None),
+        Combined::Flaky => ("flaky", None),
+        Combined::ProductFailure => {
+            let due = named()
+                .map(|record| {
+                    record
+                        .unknown
+                        .get(RERUN)
+                        .filter(|_| record.verdict == Verdict::ProductFailure)
+                        .and_then(|rerun| rerun["until"].as_str().and_then(crate::clock::unix_of))
+                })
+                .collect::<Option<Vec<u64>>>()
+                .and_then(|due| due.into_iter().min())
+                .filter(|due| now < *due);
+            (
+                if due.is_some() {
+                    "pending"
+                } else {
+                    "product_failure"
+                },
+                due,
+            )
+        }
+        // Only an `unknown` or `infra_failure` record, or none: nothing has answered it.
+        Combined::Unknown => (
+            if named().next().is_some() {
+                "unknown"
+            } else {
+                "pending"
+            },
+            None,
+        ),
+    }
+}
+
 /// The aggregate over a frozen manifest (G30): complete only when every required (check id,
 /// environment) combines to `pass`. Counts are never the measure: twelve green checks may be
 /// the wrong twelve.
@@ -1039,7 +1119,8 @@ pub fn without_conflicts(records: Vec<EvidenceRecord>) -> Vec<EvidenceRecord> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CheckId, Combined, EvidenceRecord, Producer, Subject, Verdict, combine, without_conflicts,
+        CheckId, Combined, EvidenceRecord, Producer, Subject, Verdict, answer, combine,
+        without_conflicts,
     };
 
     fn record(id: &str, environment: &str, commit: &str, verdict: Verdict) -> EvidenceRecord {
@@ -1077,6 +1158,63 @@ mod tests {
 
     fn tests_on(environment: &str) -> CheckId {
         CheckId::new("tests", environment)
+    }
+
+    /// G628: `record`, a failure a rerun follows, whose last rerun is due at Unix time `until`.
+    fn waiting(mut record: EvidenceRecord, until: u64) -> EvidenceRecord {
+        record.unknown.insert(
+            super::RERUN.to_owned(),
+            serde_json::json!({"left": 1, "until": crate::clock::rfc3339_of(until)}),
+        );
+        record
+    }
+
+    #[test]
+    fn a_failure_a_rerun_follows_is_pending_until_the_rerun_is_due() {
+        let due = 1_800_000_000;
+        let failed = [waiting(
+            record("ci/1", "x", "c", Verdict::ProductFailure),
+            due,
+        )];
+        assert_eq!(
+            answer(&failed, &tests_on("x"), "m", None, due - 1),
+            ("pending", Some(due))
+        );
+        assert_eq!(
+            answer(&failed, &tests_on("x"), "m", None, due),
+            ("product_failure", None)
+        );
+    }
+
+    #[test]
+    fn the_rerun_s_record_answers_before_it_is_due() {
+        let due = 1_800_000_000;
+        let first = waiting(record("ci/1", "x", "c", Verdict::ProductFailure), due);
+        // A rerun that fails again, or answers nothing (G580: it ran other units), ends the run:
+        // the first failure stands.
+        for rerun in [Verdict::ProductFailure, Verdict::Unknown] {
+            let ended = [first.clone(), record("ci/2", "x", "c", rerun)];
+            assert_eq!(
+                answer(&ended, &tests_on("x"), "m", None, due - 1),
+                ("product_failure", None),
+                "{rerun:?}"
+            );
+        }
+        let passed = [first, record("ci/2", "x", "c", Verdict::Pass)];
+        assert_eq!(
+            answer(&passed, &tests_on("x"), "m", None, due - 1),
+            ("flaky", None)
+        );
+    }
+
+    #[test]
+    fn no_record_is_pending_and_one_that_answers_nothing_is_unknown() {
+        assert_eq!(answer(&[], &tests_on("x"), "m", None, 0), ("pending", None));
+        let unknown = [record("ci/1", "x", "c", Verdict::Unknown)];
+        assert_eq!(
+            answer(&unknown, &tests_on("x"), "m", None, 0),
+            ("unknown", None)
+        );
     }
 
     #[test]
