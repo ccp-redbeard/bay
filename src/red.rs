@@ -34,6 +34,12 @@
 //!   a first failure that changed the check itself was judged with its first parent's check
 //!   (G91), so it is never the culprit ([`Suspect::judged_old`]); its row says the next landing
 //!   on the check's paths judges the new check.
+//! - G627 (fleet findings, 2026-11-02: a canary merge and a card merge were each named the
+//!   culprit of a flaky test's failure): with a footprint, the check reads only its read set.
+//!   When the same check judged the pass and the first failure right above it, and the read set
+//!   holds the same bytes in both trees, the check ran on the same input twice and answered two
+//!   ways: that merge is no cause, so it is not the culprit ([`Suspect::same_read`]), and the
+//!   row says the check is flaky or its environment failed.
 //! - BACKLOG 121: without a culprit, the owner (the newest failure) and the first failure are
 //!   only where the check was seen failing, never a proven cause; each red row's `say` says
 //!   which ([`Red::say`]).
@@ -191,6 +197,10 @@ pub struct Suspect {
     /// judged it with its first parent's check (G91), so no run proves it the cause: it is not
     /// the culprit, and the next landing on the check's paths judges the new check.
     pub judged_old: Option<Mark>,
+    /// G627: the first failure, right above the pass, when the same check judged both runs and
+    /// its read set holds the same bytes in both trees ([`same_read`]). The check answered two
+    /// ways on one input, so the landing is not the culprit.
+    pub same_read: Option<Mark>,
 }
 
 /// The landing that broke a red post check, as its evidence pins it: the newest pass is its
@@ -264,6 +274,7 @@ impl Suspect {
             "searched": self.searched,
             "check_added": self.added.as_ref().map(Mark::to_json),
             "judged_old": self.judged_old.as_ref().map(Mark::to_json),
+            "same_read": self.same_read.as_ref().map(Mark::to_json),
         })
     }
 }
@@ -385,6 +396,15 @@ impl Red {
                 "{check}: {} changed the check itself, and its post run judged it with the check \
                  of the merge before it, so it is named no cause; {next}.",
                 old.named()
+            );
+        }
+        if let (Some(same), Some(passed)) = (&suspect.same_read, &suspect.passed) {
+            return format!(
+                "{check}: it passed at {} and failed at {}, and the same check read the same \
+                 files in both, so that merge is no cause: the check is flaky or its environment \
+                 failed; fix the flaky test, and its next run on main clears the red.",
+                passed.named(),
+                same.named()
             );
         }
         let seen = if suspect.failed == suspect.newest_failed {
@@ -1145,21 +1165,54 @@ fn decide<'a>(
 /// adds a sentence to the red, and keeps a first failure from being named its culprit (G622),
 /// and never decides a red.
 fn changed_check(git: &Git, landing: &str, post: &crate::policy::ManifestEntry) -> bool {
-    let digest = |commit: &str| {
-        let policy = crate::policy::load_at(git, commit).ok().flatten()?;
-        policy
-            .post
-            .into_iter()
-            .find(|entry| entry.id == post.id && entry.environment == post.environment)
-            .map(|entry| entry.definition_digest)
-    };
-    let Ok(parent) = git.run(&["rev-parse", "--verify", "--quiet", &format!("{landing}^1")]) else {
+    let Some(parent) = first_parent(git, landing) else {
         return false;
     };
-    match (digest(landing), digest(parent.trim())) {
-        (Some(now), Some(then)) => now != then,
+    match (check_at(git, landing, post), check_at(git, &parent, post)) {
+        (Some((now, _)), Some((then, _))) => now != then,
         _ => false,
     }
+}
+
+/// `commit`'s first parent, when it has one.
+fn first_parent(git: &Git, commit: &str) -> Option<String> {
+    git.run(&["rev-parse", "--verify", "--quiet", &format!("{commit}^1")])
+        .ok()
+        .map(|parent| parent.trim().to_owned())
+}
+
+/// Post check `post` in the policy at `commit`, when it lists it: its definition digest, and
+/// its read set when it declares a footprint.
+fn check_at(
+    git: &Git,
+    commit: &str,
+    post: &crate::policy::ManifestEntry,
+) -> Option<(String, Option<Vec<String>>)> {
+    let policy = crate::policy::load_at(git, commit).ok().flatten()?;
+    let digest = policy
+        .post
+        .iter()
+        .find(|entry| entry.id == post.id && entry.environment == post.environment)?
+        .definition_digest
+        .clone();
+    let read = policy
+        .check(&crate::evidence::CheckId::new(&post.id, &post.environment))
+        .and_then(|entry| entry.read_set().map(<[String]>::to_vec));
+    Some((digest, read))
+}
+
+/// G627: whether the post runs of `post` at `passed` and at `failed` read one input. Each run
+/// is judged with its landing's first parent's check (G91): both checks are one definition, it
+/// declares a footprint, and its read set holds the same bytes in both landings' trees
+/// ([`crate::throughput::read_digest`]). Any fault reading it answers `false`: the evidence
+/// then pins the culprit as before.
+fn same_read(git: &Git, passed: &str, failed: &str, post: &crate::policy::ManifestEntry) -> bool {
+    let judged = |landing: &str| check_at(git, &first_parent(git, landing)?, post);
+    let (Some((then, _)), Some((now, Some(read)))) = (judged(passed), judged(failed)) else {
+        return false;
+    };
+    let digest = |landing: &str| crate::throughput::read_digest(git, landing, &read).ok();
+    then == now && matches!((digest(passed), digest(failed)), (Some(a), Some(b)) if a == b)
 }
 
 /// E68 (a fleet finding, 2026-10-30: the fix of one red was named the fix of two more, since
@@ -1438,8 +1491,18 @@ impl<'a> Answers<'a> {
         // G622: a first failure that changed the check was judged with the old one (G91).
         let judged_old =
             pinned.is_some() && changed_check(self.git, &self.line.landings[first].commit, post);
+        // G627: the same check read the same bytes at the pass and at the first failure.
+        let same_read = match pinned {
+            Some(older) if !judged_old => same_read(
+                self.git,
+                &self.line.landings[older].commit,
+                &self.line.landings[first].commit,
+                post,
+            ),
+            _ => false,
+        };
         let culprit = match pinned {
-            Some(older) if !judged_old => Some(self.culprit(post, first, at, older)?),
+            Some(older) if !judged_old && !same_read => Some(self.culprit(post, first, at, older)?),
             _ => None,
         };
         let owner = match (&culprit, added) {
@@ -1459,6 +1522,7 @@ impl<'a> Answers<'a> {
                 searched: (passed.is_none() && added.is_none()).then_some(self.line.depth),
                 added: added.map(|added| Mark::of(&landings[added])),
                 judged_old: judged_old.then(|| Mark::of(&landings[first])),
+                same_read: same_read.then(|| Mark::of(&landings[first])),
             },
             owner,
         ))

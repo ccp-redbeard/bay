@@ -10,6 +10,10 @@
 //!   `[red] window`, or past it down to `[red] reach`, B5), on a
 //!   box that serves the check's environment (`bay.checkEnvironment`), and only when the
 //!   check's `producers` list, if any, names this box's producer.
+//! - G627 (fleet findings, 2026-11-02: a canary merge and a card merge were each named the
+//!   culprit of a flaky test on one failing record): a range of one landing whose culprit stands
+//!   on fewer than two records of the check in its tree takes the rerun at the suspect too, so
+//!   a flaky first failure is found before it holds the line.
 //! - It runs the check on the range's midpoint landing, first parent, through the same adapter
 //!   and sandbox path as every check (`crate::check::run_all`): the policy and adapter at the
 //!   landing's first parent, the landing's own tree, every path required. Each run is ordinary
@@ -665,13 +669,12 @@ fn culprits(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
     let mut rows = Vec::new();
     let mut reds: BTreeMap<String, Vec<Red>> = BTreeMap::new();
     for red in judgement.red {
-        let Some(suspect) = red
-            .suspect
-            .as_ref()
-            .filter(|suspect| suspect.landings.len() > 1)
-        else {
+        let Some(suspect) = red.suspect.as_ref() else {
             continue;
         };
+        if suspect.landings.len() < 2 && !unconfirmed(git, &red, suspect)? {
+            continue;
+        }
         if suspect.passed.is_none() {
             let why = match &suspect.added {
                 Some(added) => format!(
@@ -706,6 +709,22 @@ fn culprits(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
         });
     }
     Ok((rows, pieces))
+}
+
+/// G627: whether the culprit of `suspect`, a range of one landing, stands on fewer than two
+/// records of `red`'s check in its tree, of any producer: one rerun there confirms it or makes
+/// it flaky ([`bisect`]). With two, it ran again already, and is never run a third time here.
+fn unconfirmed(git: &Git, red: &Red, suspect: &Suspect) -> Result<bool, String> {
+    let Some(culprit) = &suspect.culprit else {
+        return Ok(false);
+    };
+    let id = CheckId::new(&red.check, &red.environment);
+    let records = evidence::records_for(git, &tree_of(git, &culprit.mark.landing)?)?;
+    let count = records
+        .iter()
+        .filter(|record| record.kind == evidence::KIND_CHECK && record.check == id)
+        .count();
+    Ok(count < 2)
 }
 
 /// The producer this box records as, and its signer when the repository has a registry.
