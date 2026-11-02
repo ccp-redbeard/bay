@@ -2,8 +2,10 @@
 //! records five times, about 2 s). One process reads the record at each chain head once: a
 //! later read of every chain lists the chains again and batches only the heads that moved. Read
 //! from the trace a test build writes when `BAY_TEST_GIT_TRACE` names a file (G171): a read of
-//! every chain is one `for-each-ref` of the change refs, and the `cat-file --batch` that
-//! starts next is the batch of records it reads (none when it has read them all).
+//! every chain is one `for-each-ref` of the change refs, and a `cat-file --batch` is one batch
+//! of records. A status reads on several threads at once, so the spawn that starts after a read
+//! may be another thread's: the test counts the batches of the whole status, not the spawn that
+//! follows each read.
 //!
 //! Guard to mutate: in `src/change.rs` `held_records`, hand back no record kept, and every
 //! read of every chain batches every record again.
@@ -16,13 +18,10 @@ use support::result_json;
 
 const LISTING: &str = "--format=%(objectname) %(refname)";
 
-/// One git spawn of bay's own process: its subcommand, its arguments, and when it ran (from,
-/// to) in microseconds since the Unix epoch.
+/// One git spawn of bay's own process: its subcommand and its arguments.
 struct Spawn {
     sub: String,
     args: Vec<String>,
-    from: u64,
-    to: u64,
 }
 
 impl Spawn {
@@ -40,7 +39,7 @@ impl Spawn {
     }
 }
 
-/// `bay status` as `agent` on its clone: bay's own git spawns, in the order they started.
+/// `bay status` as `agent` on its clone: bay's own git spawns.
 fn traced(case: &Plain) -> Vec<Spawn> {
     let trace = case.test_box.path().join("status-trace.jsonl");
     let (code, result) = result_json(
@@ -58,28 +57,19 @@ fn traced(case: &Plain) -> Vec<Spawn> {
         .map(|line| serde_json::from_str(line).unwrap_or_else(|error| panic!("{error}: {line}")))
         .collect();
     let pid = lines.first().map(|line| line["pid"].clone());
-    let mut spawns: Vec<Spawn> = lines
+    lines
         .iter()
         .filter(|line| Some(&line["pid"]) == pid.as_ref())
-        .map(|line| {
-            let to = line["end"]
-                .as_u64()
-                .expect("the trace names each spawn's end");
-            Spawn {
-                sub: line["sub"].as_str().unwrap().to_owned(),
-                args: line["args"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|arg| arg.as_str().unwrap().to_owned())
-                    .collect(),
-                from: to - line["us"].as_u64().unwrap(),
-                to,
-            }
+        .map(|line| Spawn {
+            sub: line["sub"].as_str().unwrap().to_owned(),
+            args: line["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|arg| arg.as_str().unwrap().to_owned())
+                .collect(),
         })
-        .collect();
-    spawns.sort_by_key(|spawn| spawn.from);
-    spawns
+        .collect()
 }
 
 #[test]
@@ -94,27 +84,14 @@ fn a_status_batches_each_chain_record_once() {
         assert_eq!(code, 0, "{started}");
     }
     let spawns = traced(&case);
-    let reads: Vec<&Spawn> = spawns
+    let reads = spawns
         .iter()
         .filter(|spawn| spawn.lists_every_chain())
-        .collect();
-    let batched = reads
-        .iter()
-        .filter(|read| {
-            spawns
-                .iter()
-                .find(|spawn| spawn.from >= read.to)
-                .is_some_and(Spawn::batch)
-        })
         .count();
+    let batches = spawns.iter().filter(|spawn| spawn.batch()).count();
+    assert!(reads >= 3, "a status read every chain {reads} times");
     assert!(
-        reads.len() >= 3,
-        "a status read every chain {} times",
-        reads.len()
-    );
-    assert!(
-        batched <= 2,
-        "{batched} of {} reads of every chain batched the records again",
-        reads.len()
+        batches <= 2,
+        "{batches} batches of records for {reads} reads of every chain"
     );
 }
