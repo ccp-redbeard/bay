@@ -3,9 +3,9 @@
 //! `bay status`): the change that owns a red post check is told so, once.
 //!
 //! Each runner pass, after it reads the remote's post records, writes one `red_owner` event per
-//! red check of main to its log, addressed to the change [`Red::fixes`] names: the culprit when
-//! the evidence pins one, else the first failure, which stays the same while the red stands. The
-//! event's id is a digest of the check, its environment and that change, so one red is one event
+//! red check of main and change that owns it to its log: the culprit when the evidence pins one,
+//! else each merge on its paths since it last passed (G634, below), which stay the same while the
+//! red stands. The event's id is a digest of the check, its environment and that change, so one red is one event
 //! however many runners see it, and a log that holds it is never written again. A new event asks
 //! the wake adapter once to wake that change's session (`cause: "red"`), and is told to the
 //! notify adapter; the session's hook tells it as a notice line (`crate::notice`). The event's
@@ -20,6 +20,13 @@
 //! before it, or to that landing when none was on its paths. Each is told once per check, in an
 //! event with the units; the evidence does not prove which of them broke the units, and the line
 //! says so.
+//!
+//! G634 (a fleet finding, 2026-11-02: a red with no culprit was told to its first failure, a
+//! merge of three documents no path of the check names, and not to the one merge on its paths
+//! since it last passed): when the evidence pins no landing, the red is told to the merges on the
+//! check's paths since it last passed, up to its first failure, once each, or to that failure
+//! when none was on its paths. The line says how many there were, and that none is a proven
+//! cause.
 
 use std::collections::BTreeSet;
 
@@ -65,11 +72,15 @@ fn told(repo: &Repo, trunk: &str) -> Result<Vec<Value>, String> {
     let mut notes = Vec::new();
     let mut written = BTreeSet::new();
     for red in &reds {
-        let mut owners: Vec<(String, Owns)> = red
-            .fixes()
-            .map(|owner| (owner.clone(), Owns::Red))
-            .into_iter()
-            .collect();
+        // A fault reading the range leaves the red's own owner told.
+        let mut owners = match range_owners(git, red) {
+            Ok(Some(owners)) => owners,
+            Ok(None) => red_owner(red),
+            Err(error) => {
+                notes.push(json!({"red_owner": null, "check": red.check, "error": error}));
+                red_owner(red)
+            }
+        };
         // A fault reading the units leaves the red's own owner told.
         match unit_owners(git, registry.as_ref(), red) {
             Ok(more) => owners.extend(more),
@@ -124,10 +135,90 @@ fn told_one(
 enum Owns {
     /// The red: [`Red::fixes`] names the change.
     Red,
+    /// G634: the red, which the evidence pins on no landing. The change is one of `among` merges
+    /// on the check's paths since it last passed; `among` is 0 when none was, and the change is
+    /// where it was first seen failing.
+    Range { among: usize },
     /// G630: the units that failed first after the red's first failure. The change is one of
     /// `among` merges on the check's paths since the failing run before; `among` is 0 when none
     /// was, and the change is where they were first seen failing.
     Units { units: Vec<String>, among: usize },
+}
+
+/// The change [`Red::fixes`] names, told that it owns `red`.
+fn red_owner(red: &Red) -> Vec<(String, Owns)> {
+    red.fixes()
+        .map(|owner| (owner.clone(), Owns::Red))
+        .into_iter()
+        .collect()
+}
+
+/// G634: the changes to tell of `red` when the evidence pins no landing: the merges on the
+/// check's paths after the newest pass, up to the first failure, oldest first, or that failure
+/// when none was on its paths. `None` when [`Red::fixes`] names the owner: the evidence pins a
+/// culprit or the landing that added the check, or found no pass, and the range then runs to the
+/// oldest landing read (B5).
+fn range_owners(git: &Git, red: &Red) -> Result<Option<Vec<(String, Owns)>>, String> {
+    let Some(suspect) = &red.suspect else {
+        return Ok(None);
+    };
+    if suspect.culprit.is_some() || suspect.added.is_some() || suspect.passed.is_none() {
+        return Ok(None);
+    }
+    let names: Vec<String> = suspect
+        .landings
+        .iter()
+        .map(|mark| format!("{}^1", mark.landing))
+        .collect();
+    let parents = rev_parse(git, &names)?;
+    let pairs: Vec<(&str, &str)> = suspect
+        .landings
+        .iter()
+        .zip(&parents)
+        .map(|(mark, parent)| (mark.landing.as_str(), parent.as_str()))
+        .collect();
+    let changed = crate::check::changed_paths_many(git, &pairs)?;
+    let (to_tell, among) = on_paths(red, suspect.landings.iter().zip(&changed), &suspect.failed);
+    Ok(Some(
+        to_tell
+            .into_iter()
+            .filter_map(|mark| mark.change.clone())
+            .map(|change| (change, Owns::Range { among }))
+            .collect(),
+    ))
+}
+
+/// The marks of `range` whose changed paths meet `red`'s check, oldest first, and how many;
+/// `last` alone, and 0, when none does.
+fn on_paths<'m, 'c>(
+    red: &Red,
+    range: impl Iterator<Item = (&'m Mark, &'c Vec<String>)>,
+    last: &'m Mark,
+) -> (Vec<&'m Mark>, usize) {
+    let on: Vec<&Mark> = range
+        .filter(|(_, changed)| red.covers(changed))
+        .map(|(mark, _)| mark)
+        .collect();
+    match on.len() {
+        0 => (vec![last], 0),
+        among => (on, among),
+    }
+}
+
+/// The object id of each of `names`, in their order, read by one `git rev-parse`.
+fn rev_parse(git: &Git, names: &[String]) -> Result<Vec<String>, String> {
+    let mut args = vec!["rev-parse"];
+    args.extend(names.iter().map(String::as_str));
+    let out = git.run(&args).map_err(|error| error.message())?;
+    let ids: Vec<String> = out.lines().map(str::to_owned).collect();
+    if ids.len() != names.len() {
+        return Err(format!(
+            "git rev-parse gave {} of {} names",
+            ids.len(),
+            names.len()
+        ));
+    }
+    Ok(ids)
 }
 
 /// G630: the changes to tell of `red`'s units that its first failure did not fail, each with
@@ -155,17 +246,8 @@ fn unit_owners(
         .map(|mark| format!("{}^{{tree}}", mark.landing))
         .collect();
     names.extend(marks[1..].iter().map(|mark| format!("{}^1", mark.landing)));
-    let mut args = vec!["rev-parse"];
-    args.extend(names.iter().map(String::as_str));
-    let out = git.run(&args).map_err(|error| error.message())?;
-    let ids: Vec<&str> = out.lines().collect();
-    if ids.len() != names.len() {
-        return Err(format!(
-            "git rev-parse gave {} of {} names",
-            ids.len(),
-            names.len()
-        ));
-    }
+    let ids = rev_parse(git, &names)?;
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
     let (trees, parents) = ids.split_at(marks.len());
     let id = CheckId::new(&red.check, &red.environment);
     let mut failed = Vec::with_capacity(marks.len());
@@ -202,16 +284,11 @@ fn unit_owners(
             continue;
         }
         // `changed[n]` is the paths of `marks[n + 1]`.
-        let on_paths: Vec<&Mark> = (since + 1..=at)
-            .filter(|n| red.covers(&changed[n - 1]))
-            .map(|n| marks[n])
-            .collect();
-        let among = on_paths.len();
-        let to_tell = if on_paths.is_empty() {
-            vec![marks[at]]
-        } else {
-            on_paths
-        };
+        let (to_tell, among) = on_paths(
+            red,
+            (since + 1..=at).map(|n| (marks[n], &changed[n - 1])),
+            marks[at],
+        );
         for mark in to_tell {
             if let Some(change) = &mark.change
                 && Some(change) != red.fixes()
@@ -254,7 +331,8 @@ fn failed_units(records: &[EvidenceRecord], id: &CheckId) -> Option<Vec<String>>
 
 /// The id of the `red_owner` event of `red`, owned by `owner`: one red, one event. A change told
 /// of units (G630) is told once per check too; its id is not the one it would have as the red's
-/// owner, so a later red that it owns is still told.
+/// owner, so a later red that it owns is still told. A merge of a red's range (G634) owns the red:
+/// its id is the one it has as the red's owner.
 fn event_id(red: &Red, owner: &str, owns: &Owns) -> Result<String, String> {
     let mut fields = json!({
         "kind": KIND,
@@ -287,9 +365,13 @@ fn event(id: &str, red: &Red, owns: &Owns, record: &ChangeRecord) -> Value {
         "detail": red.to_json(),
         "recurrence_key": format!("{KIND}/{}/{}", red.check, red.environment),
     });
-    if let Owns::Units { units, among } = owns {
-        event["units"] = json!(units);
-        event["among"] = json!(among);
+    match owns {
+        Owns::Red => {}
+        Owns::Range { among } => event["among"] = json!(among),
+        Owns::Units { units, among } => {
+            event["units"] = json!(units);
+            event["among"] = json!(among);
+        }
     }
     event
 }
@@ -316,7 +398,17 @@ fn said(red: &Red, owns: &Owns, record: &ChangeRecord) -> String {
         Owns::Red if red.culprit().is_some() => {
             "broke it: the check passed on the merge before it and failed on it".to_owned()
         }
-        Owns::Red => "is where it was first seen failing, not a proven cause".to_owned(),
+        Owns::Red | Owns::Range { among: 0 } => {
+            "is where it was first seen failing, not a proven cause".to_owned()
+        }
+        Owns::Range { among: 1 } => {
+            "is the one merge on its paths since it last passed, not a proven cause".to_owned()
+        }
+        Owns::Range { among } => {
+            format!(
+                "is one of {among} merges on its paths since it last passed, not a proven cause"
+            )
+        }
         Owns::Units { units, among } => {
             let more = match units.len() {
                 1 => "1 more unit".to_owned(),
@@ -334,4 +426,47 @@ fn said(red: &Red, owns: &Owns, record: &ChangeRecord) -> String {
         "main is red on {}; your change {named} {how}. Changes on its paths wait.",
         red.check
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mark(landing: &str) -> Mark {
+        Mark {
+            landing: landing.to_owned(),
+            change: Some(landing.to_owned()),
+        }
+    }
+
+    /// G634, G630: the marks whose paths meet the check are told, oldest first, with how many;
+    /// with none on its paths, the last mark alone, and 0.
+    #[test]
+    fn the_merges_on_the_paths_are_told_else_the_last() {
+        let red = Red {
+            check: "suite".to_owned(),
+            environment: "local".to_owned(),
+            paths: Some(vec!["src/**".to_owned()]),
+            landing: "c".to_owned(),
+            change: None,
+            suspect: None,
+            fix: None,
+            changed_check: false,
+        };
+        let marks = [mark("a"), mark("b"), mark("c")];
+        let changed = [
+            vec!["src/a.rs".to_owned()],
+            vec!["conf/b".to_owned()],
+            vec!["src/c.rs".to_owned()],
+        ];
+        let told = on_paths(&red, marks.iter().zip(&changed), &marks[2]);
+        assert_eq!(told, (vec![&marks[0], &marks[2]], 2));
+        let off = [
+            vec!["conf/a".to_owned()],
+            Vec::new(),
+            vec!["docs/c.md".to_owned()],
+        ];
+        let told = on_paths(&red, marks.iter().zip(&off), &marks[2]);
+        assert_eq!(told, (vec![&marks[2]], 0));
+    }
 }

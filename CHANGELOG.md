@@ -5,6 +5,9 @@
 - A post check no worker answered waits ten times what its try cost, from ten minutes to the hour.
 - Before, it always waited the hour, so one 12 s try held its check that long.
 - A check that holds changes still waits five minutes.
+- With no proven culprit, a red post check is told to each merge on its paths since it last passed.
+- Before, it was told to its first failure, a merge the check's paths may not name.
+- With no merge on its paths, the first failure is told, as before.
 
 ## 0.6.24
 

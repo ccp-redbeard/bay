@@ -1,10 +1,10 @@
 //! G571 (a fleet finding, 2026-10-29: a red post check held every change on its paths, and
 //! nothing told the session whose merge first failed it). A runner pass that finds a red post
 //! check of trunk writes one `red_owner` event to its log, addressed to the change that owns the
-//! red: the culprit when the evidence pins one, else the first failure. The event names the
-//! check and the exact fix to run, the wake adapter is asked once to wake the change's session
-//! (`cause: "red"`, `urgent`), and the owner's session hears it as one notice line. A second
-//! pass over the same red writes nothing and wakes no one.
+//! red: the culprit when the evidence pins one, else each merge on its paths since it last passed
+//! (G634). The event names the check and the exact fix to run, the wake adapter is asked once to
+//! wake the change's session (`cause: "red"`, `urgent`), and the owner's session hears it as one
+//! notice line. A second pass over the same red writes nothing and wakes no one.
 //!
 //! Guards to mutate (each makes a case here fail):
 //! - `src/red_owner.rs` `told`: drop the `held.contains(&id)` skip, and the second pass writes a
@@ -63,7 +63,11 @@ fn trunk() -> Trunk {
         ".bay/config.toml".to_owned(),
         "[plugin.wake]\ncommand = \"scripts/bay-wake\"\n".to_owned(),
     ));
-    test_box.seed_with_check(&repo, &[("src/a.rs", "fn a() {}\n")], &files);
+    test_box.seed_with_check(
+        &repo,
+        &[("src/a.rs", "fn a() {}\n"), ("docs/a.md", "a\n")],
+        &files,
+    );
     let suite_box = test_box.clone_of(&remote, "suite-box");
     let key = fresh_key(&test_box, "suite-1");
     test_box.git_ok(&suite_box, &["config", "bay.producerName", "suite-1"]);
@@ -196,9 +200,11 @@ fn a_red_post_check_tells_the_change_that_owns_it_once() {
         .unwrap()
         .to_owned();
 
-    // GIVEN three landings on `src/`, the suite passing on the first and failing on the third.
-    let landings: Vec<(String, String)> = (0..3)
-        .map(|n| trunk.land(&format!("src/l{n}.rs")))
+    // GIVEN three landings, the suite passing on the first and failing on the third, and the
+    // second off its paths: the third is the one merge on them since it passed (G634).
+    let landings: Vec<(String, String)> = ["src/l0.rs", "docs/l1.md", "src/l2.rs"]
+        .iter()
+        .map(|path| trunk.land(path))
         .collect();
     trunk.suite(&landings[0].1, "pass");
     trunk.suite(&landings[2].1, "product_failure");

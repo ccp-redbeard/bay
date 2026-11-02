@@ -1123,7 +1123,18 @@ fn red_line(change: &str, event: &Value) -> String {
         None if event["culprit"] == true => {
             "broke it: the check passed on the merge before it and failed on it".to_owned()
         }
-        None => "is where it was first seen failing, not a proven cause".to_owned(),
+        // G634: one of the merges on its paths since it last passed.
+        None => match event["among"].as_u64() {
+            Some(1) => {
+                "is the one merge on its paths since it last passed, not a proven cause".to_owned()
+            }
+            Some(n) if n > 1 => {
+                format!(
+                    "is one of {n} merges on its paths since it last passed, not a proven cause"
+                )
+            }
+            _ => "is where it was first seen failing, not a proven cause".to_owned(),
+        },
     };
     let mut out: String = format!(
         "bay: change {change}: main is red on {check}; your change {how}. Changes on its paths \
@@ -1562,5 +1573,29 @@ mod tests {
         assert!(line("abcd1234", "red_owner", &event).contains(
             "your change is where they were first seen failing: it now fails on 1 more unit"
         ));
+    }
+
+    /// G634: a change told of a red the evidence pins on no landing is told among how many
+    /// merges on its paths since it last passed, and never that it broke the check.
+    #[test]
+    fn a_range_owner_line_counts_the_merges_on_its_paths() {
+        let event = serde_json::json!({
+            "kind": "red_owner", "check": "suite", "culprit": false, "among": 1,
+        });
+        assert_eq!(
+            line("abcd1234", "red_owner", &event),
+            "bay: change abcd1234: main is red on suite; your change is the one merge on its \
+             paths since it last passed, not a proven cause. Changes on its paths wait. Fix it \
+             with a new change: bay start <intent> --fixes abcd1234\n"
+        );
+        let event = serde_json::json!({"kind": "red_owner", "check": "suite", "among": 2});
+        assert!(line("abcd1234", "red_owner", &event).contains(
+            "your change is one of 2 merges on its paths since it last passed, not a proven cause"
+        ));
+        let event = serde_json::json!({"kind": "red_owner", "check": "suite", "among": 0});
+        assert!(
+            line("abcd1234", "red_owner", &event)
+                .contains("your change is where it was first seen failing, not a proven cause")
+        );
     }
 }

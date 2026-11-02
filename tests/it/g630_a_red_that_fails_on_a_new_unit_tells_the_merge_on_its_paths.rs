@@ -55,7 +55,7 @@ printf '{"schema":"bay.check.result/1","exercised":{"commit":"%s","tree":"%s"},"
 
 /// The trunk: `suite`'s units t1 and t2 pass. Its wake adapter `scripts/bay-wake` appends each
 /// request to `<root>/woken`.
-struct Suite {
+pub(crate) struct Suite {
     test_box: TestBox,
     repo: PathBuf,
     remote: PathBuf,
@@ -63,7 +63,7 @@ struct Suite {
 }
 
 impl Suite {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let test_box = TestBox::new();
         let repo = test_box.repo_any("repo");
         let remote = test_box.path().join("repo-remote.git");
@@ -106,7 +106,7 @@ impl Suite {
 
     /// Opens a change with `start` (its intent and flags), edits its view, and waits until it
     /// lands. Returns its id.
-    fn land(&self, start: &[&str], edit: &dyn Fn(&Path)) -> String {
+    pub(crate) fn land(&self, start: &[&str], edit: &dyn Fn(&Path)) -> String {
         let mut args = vec!["start"];
         args.extend(start);
         let started = self.test_box.bay_ok(&self.repo, &args);
@@ -123,7 +123,7 @@ impl Suite {
     }
 
     /// One runner pass, then a second, which tells what the first one's records judge.
-    fn run(&self) -> Value {
+    pub(crate) fn run(&self) -> Value {
         let ran = self
             .test_box
             .bay_ok(&self.repo, &["runner", "run", "--once"]);
@@ -133,7 +133,7 @@ impl Suite {
     }
 
     /// The `red` wake requests the adapter was given, oldest first.
-    fn red_wakes(&self) -> Vec<Value> {
+    pub(crate) fn red_wakes(&self) -> Vec<Value> {
         std::fs::read_to_string(&self.woken)
             .unwrap_or_default()
             .lines()
@@ -143,7 +143,7 @@ impl Suite {
             .collect()
     }
 
-    fn red(&self) -> Value {
+    pub(crate) fn red(&self) -> Value {
         self.test_box.bay_ok(&self.repo, &["status"])["detail"]["red"].clone()
     }
 }
