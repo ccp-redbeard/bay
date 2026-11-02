@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.22
+
+- With a footprint, a red names no culprit when the pass and the first failure read the same bytes.
+- Its say calls the check flaky, or its environment failed; the check's next run on main clears it.
+- With `bisect_post`, a one-landing culprit standing on one record of the check is checked again at that landing.
+- A pass there clears the red; a second failure confirms the culprit, and the check runs no third time.
+
 ## 0.6.21
 
 - `bay status` waits for its sweep of the remote at most `--deadline` seconds (default 3).
