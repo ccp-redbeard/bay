@@ -308,15 +308,28 @@ fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
         // adapter that picks its tests by changed paths ran none of the failing ones. A red check
         // is asked what changed since its newest pass before the failure, a range that holds the
         // paths that chose the failing tests; with no pass in the window, the whole span.
+        //
+        // G629 (a fleet finding, 2026-11-02: after its red, edge-py-fast ran 2,073 units on each
+        // new tip, in 627-645 s, because the culprit's paths stayed in every tip's range and
+        // picked a whole service): a red check whose newest failing run was asked its failed
+        // units again and answered each one is asked what changed since that run's landing.
+        // That run already tested the range before it; this one runs the failed units
+        // ([`post_request`]) and what the landings after it wake.
+        let failing = match red_of(entry) {
+            Some(red) => failing(git, registry.as_ref(), red, &id)?,
+            None => Failing::default(),
+        };
         let since = match red_of(entry) {
-            Some(red) => red
-                .suspect
-                .as_ref()
-                .and_then(|suspect| suspect.passed.as_ref())
-                .map_or_else(
-                    || span_start(git, &tip),
-                    |passed| Ok(passed.landing.clone()),
-                )?,
+            Some(red) => match (&red.suspect, failing.answered_rerun) {
+                (Some(suspect), true) => suspect.newest_failed.landing.clone(),
+                (suspect, _) => suspect
+                    .as_ref()
+                    .and_then(|suspect| suspect.passed.as_ref())
+                    .map_or_else(
+                        || span_start(git, &tip),
+                        |passed| Ok(passed.landing.clone()),
+                    )?,
+            },
             None => ran
                 .get(&(entry.id.clone(), entry.environment.clone()))
                 .map_or_else(
@@ -331,7 +344,7 @@ fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
         {
             continue;
         }
-        let (post, rerun) = post_request(git, registry.as_ref(), red_of(entry), &id, &tip)?;
+        let (post, rerun) = post_request(failing.units, &tip);
         // One post check an environment a pass: the next pass plans the next (#123).
         pieces.push(Piece {
             environment: entry.environment.clone(),
@@ -406,64 +419,90 @@ fn in_turn<'a>(
     (entries, ran)
 }
 
-/// The body of a post run of `id` on `tip` and the units it asks to run again: none, or, for a
-/// red check, the units that failed in the red's newest failing record ([`failed_units`]).
-/// The body names them too, so the record says what its run was asked.
-fn post_request(
-    git: &Git,
-    registry: Option<&Registry>,
-    red: Option<&Red>,
-    id: &CheckId,
-    tip: &str,
-) -> Result<(Value, Vec<String>), String> {
+/// The body of a post run on `tip` and the units it asks to run again: none, or, for a red
+/// check, the units that failed in the red's newest failing record ([`failing`]). The body names
+/// them too, so the record says what its run was asked.
+fn post_request(rerun: Vec<String>, tip: &str) -> (Value, Vec<String>) {
     let mut body = json!({"tip": tip});
-    let rerun = match red {
-        Some(red) => failed_units(git, registry, red, id)?,
-        None => Vec::new(),
-    };
     if !rerun.is_empty() {
         body["rerun"] = json!(rerun);
     }
-    Ok((body, rerun))
+    (body, rerun)
+}
+
+/// What a red check's newest failing record says about its next run ([`failing`]).
+#[derive(Default)]
+struct Failing {
+    /// The units that failed, sorted, once each.
+    units: Vec<String>,
+    /// G629: the record's own run was asked to run units again (`post.rerun`), and the record
+    /// answers each of them, as a unit or in `gone`.
+    answered_rerun: bool,
 }
 
 /// G540 (a fleet finding, 2026-10-29: scripts-fast failed on 3 units, and every later post run
 /// asked its adapter only about the files changed since, which no test read, so the red stood):
-/// the units that failed in `red`'s newest failing record of `id`, sorted, read from the records
-/// the red judgement counts at its newest failing landing. Empty when that record names no
-/// failing unit.
-fn failed_units(
+/// the units that failed in `red`'s newest failing record of `id`, read from the records the red
+/// judgement counts at its newest failing landing, and whether that record answered the units
+/// its own run was asked again (G629). Empty when that record names no failing unit.
+fn failing(
     git: &Git,
     registry: Option<&Registry>,
     red: &Red,
     id: &CheckId,
-) -> Result<Vec<String>, String> {
+) -> Result<Failing, String> {
     let Some(suspect) = &red.suspect else {
-        return Ok(Vec::new());
+        return Ok(Failing::default());
     };
     let tree = tree_of(git, &suspect.newest_failed.landing)?;
     let records = evidence::counted(git, evidence::records_for(git, &tree)?, registry)?;
-    let newest = records
+    let Some(newest) = records
         .iter()
         .filter(|record| {
             record.kind == evidence::KIND_CHECK
                 && record.check == *id
                 && record.verdict == Verdict::ProductFailure
         })
-        .max_by(|one, other| one.at.cmp(&other.at));
+        .max_by(|one, other| one.at.cmp(&other.at))
+    else {
+        return Ok(Failing::default());
+    };
     let mut units: Vec<String> = newest
-        .map(|record| {
-            record
-                .units
-                .iter()
-                .filter(|unit| unit.verdict == Verdict::ProductFailure)
-                .map(|unit| unit.id.clone())
-                .collect()
-        })
-        .unwrap_or_default();
+        .units
+        .iter()
+        .filter(|unit| unit.verdict == Verdict::ProductFailure)
+        .map(|unit| unit.id.clone())
+        .collect();
     units.sort();
     units.dedup();
-    Ok(units)
+    let asked = strings(
+        newest
+            .unknown
+            .get("post")
+            .and_then(|post| post.get("rerun")),
+    );
+    let gone = strings(newest.unknown.get(check::GONE));
+    let answered_rerun = !units.is_empty()
+        && !asked.is_empty()
+        && asked
+            .iter()
+            .all(|unit| gone.contains(unit) || newest.units.iter().any(|ran| ran.id == *unit));
+    Ok(Failing {
+        units,
+        answered_rerun,
+    })
+}
+
+/// The strings of a JSON list; none for anything else.
+fn strings(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// How many landings back from `tip` this box last recorded each of `entries` (G433), or another

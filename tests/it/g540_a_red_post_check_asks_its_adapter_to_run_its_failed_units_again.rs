@@ -14,7 +14,7 @@
 //!
 //! Guards to mutate: in `src/bisect.rs` `tips`, `crate::red::holding` (`crate::red::red`: the
 //! check whose fix waits is not run on the fix, and stays `pending_fix`); the red check's `rerun` (an empty one: the
-//! fix answers no requested unit, and the deaf run's pass clears the red); `failed_units` keeping
+//! fix answers no requested unit, and the deaf run's pass clears the red); `failing` keeping
 //! only the failed units (every unit: `rerun` names t2 as well); in `src/check.rs` `judge_units`, the
 //! unanswered-rerun refusal (the deaf run's pass clears the red), and `plan.gone` counting as an
 //! answer (the fix that deletes t3 stays `unknown`).

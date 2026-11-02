@@ -205,7 +205,7 @@ impl Queued {
             change: entry.change.clone(),
             op_id: op.op_id.clone(),
             revision: op.revision.clone(),
-            live: !op.state.is_terminal() && op.state != OpState::Blocked,
+            live: record.waits(op),
             batchable: record.lane.is_none()
                 && crate::inputs::names(&record.declared_inputs).is_empty()
                 && op.batch_culprit.is_none(),

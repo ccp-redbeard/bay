@@ -306,6 +306,36 @@ impl ChangeRecord {
             .find(|op| op.op_id == op_id)
             .map_or(self.retention_cut, |op| op.state.is_terminal())
     }
+
+    /// Whether the change has ended (abandoned, superseded, merged, or its work already on
+    /// trunk): none of its operations runs again, whatever state an older one was left in.
+    #[must_use]
+    pub fn ended(&self) -> bool {
+        matches!(
+            self.state,
+            ChangeState::Abandoned
+                | ChangeState::Superseded
+                | ChangeState::Landed
+                | ChangeState::NoEffect
+        )
+        // A fleet finding (2026-10-27): a change an older bay reopened after it merged read `ready`
+        // with a later revision `submitted`; every runner took that revision each pass and refused it
+        // as already merged, a receipt each time. A change with a published operation is on main.
+        || self
+            .operations
+            .iter()
+            .any(|op| op.state == OpState::Published)
+    }
+
+    /// Whether `op`, one of this change's operations, waits for an executor: neither ended nor
+    /// blocked, and its change has not ended. BACKLOG 213 (a fleet finding, 2026-11-02: a change
+    /// landed 10-28 with a later revision still `admitted`, and three runners named that
+    /// revision as the operation they held for five days): an older state left on an ended
+    /// change's operation is not work.
+    #[must_use]
+    pub fn waits(&self, op: &Operation) -> bool {
+        !op.state.is_terminal() && op.state != OpState::Blocked && !self.ended()
+    }
 }
 
 /// Operation states (`DESIGN` § 9a).

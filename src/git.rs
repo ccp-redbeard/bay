@@ -142,9 +142,22 @@ pub struct RepoInfo {
 #[derive(Debug)]
 pub enum GitError {
     Spawn(std::io::Error),
-    Timeout { args: String, secs: u64 },
-    Failed { args: String, stderr: String },
-    NotUtf8 { args: String },
+    Timeout {
+        args: String,
+        secs: u64,
+    },
+    /// BACKLOG 218: a call to a remote that this process's deadline left no time for, not run
+    /// ([`crate::deadline`]).
+    Deadline {
+        args: String,
+    },
+    Failed {
+        args: String,
+        stderr: String,
+    },
+    NotUtf8 {
+        args: String,
+    },
     UnexpectedOutput(&'static str),
     Join,
 }
@@ -155,6 +168,9 @@ impl GitError {
         match self {
             Self::Spawn(error) => format!("failed to run git: {error}"),
             Self::Timeout { args, secs } => format!("{args} exceeded {secs}s"),
+            Self::Deadline { args } => {
+                format!("git {args} was not run: this process's time for the remote was spent")
+            }
             Self::Failed { args, stderr } => format!("git {args} failed: {stderr}"),
             Self::NotUtf8 { args } => format!("git {args} returned output that is not utf-8"),
             Self::UnexpectedOutput(what) => (*what).to_owned(),
@@ -434,6 +450,10 @@ impl Git {
             if output.status.success() || !host_refused(args, &output.stderr) {
                 break;
             }
+            // BACKLOG 218: no retry this process's deadline would cut.
+            if crate::deadline::bounded(wait) != Some(wait) {
+                break;
+            }
             std::thread::sleep(wait);
             output = self.output(args, envs, input, timeout)?;
         }
@@ -492,6 +512,14 @@ impl Git {
     ) -> Result<Output, GitError> {
         let timeout = bound_for(args, timeout);
         let args_display = args.join(" ");
+        // BACKLOG 218: a call to a remote ends by this process's deadline, and none starts after it.
+        let timeout = if talks_to_remote(args) {
+            crate::deadline::bounded(timeout).ok_or_else(|| GitError::Deadline {
+                args: args_display.clone(),
+            })?
+        } else {
+            timeout
+        };
         let run = || {
             let mut cmd = self.command();
             cmd.args(as_formatted(args));
@@ -1384,9 +1412,15 @@ fn records_only(words: &[&str]) -> bool {
 /// The bound of a call to `git <args>` given `timeout`: a call that talks to a remote under the
 /// default local bound gets [`GIT_NETWORK_TIMEOUT`]; a bound a caller chose stays as it is.
 fn bound_for(args: &[&str], timeout: std::time::Duration) -> std::time::Duration {
-    if timeout != GIT_CALL_TIMEOUT {
-        return timeout;
+    if timeout == GIT_CALL_TIMEOUT && talks_to_remote(args) {
+        GIT_NETWORK_TIMEOUT
+    } else {
+        timeout
     }
+}
+
+/// Whether `git <args>` talks to a remote: its command is a push, fetch, ls-remote, clone or pull.
+fn talks_to_remote(args: &[&str]) -> bool {
     let mut words = args.iter();
     while let Some(word) = words.next() {
         if *word == "-c" || *word == "-C" {
@@ -1396,13 +1430,9 @@ fn bound_for(args: &[&str], timeout: std::time::Duration) -> std::time::Duration
         if word.starts_with('-') {
             continue;
         }
-        return if matches!(*word, "push" | "fetch" | "ls-remote" | "clone" | "pull") {
-            GIT_NETWORK_TIMEOUT
-        } else {
-            timeout
-        };
+        return matches!(*word, "push" | "fetch" | "ls-remote" | "clone" | "pull");
     }
-    timeout
+    false
 }
 
 /// A bare repository holds `HEAD` and `objects/` at its top and has no `.git`.

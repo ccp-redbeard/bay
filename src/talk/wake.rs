@@ -87,13 +87,15 @@ pub fn wake_outcome(repo: &Repo, outcome: &Outcome) -> Value {
 }
 
 /// 0.6.3 (`crate::red_owner`): the change that owns a red post check of main, whose session is
-/// woken once to fix it. `event` is the `red_owner` event's id, and `line` the sentence it tells.
+/// woken once to fix it. `event` is the `red_owner` event's id, `said` what it tells the red is,
+/// and `fix` the command that opens the fix.
 pub struct RedOwner<'a> {
     pub change: &'a str,
     pub check: &'a str,
     pub event: &'a str,
     pub actor: &'a Actor,
-    pub line: &'a str,
+    pub said: &'a str,
+    pub fix: &'a str,
 }
 
 /// Asks the wake adapter, once, to wake the session that owns a red ([`red_request`]), and
@@ -142,10 +144,37 @@ fn asked(repo: &Repo, request: &Value, with_why: bool) -> Value {
     }
 }
 
-/// The `bay.wake/1` request for `talk` to `me` on `machine`; `line` is cut to 200 characters.
+/// The most characters of a talk's or a red's own text that a wake line shows.
+const LINE_TEXT: usize = 200;
+
+/// `text` as a wake line shows it: whole when it has at most [`LINE_TEXT`] characters. A longer
+/// one is cut at its last space within them, marked `…`, and followed by `whole`, which says
+/// where to read all of it (BACKLOG 217, a fleet finding of 2026-11-02: three talks were cut at
+/// exactly 200 of 365, 205 and 341 characters with no mark, and their readers took half a
+/// sentence for the whole ask).
+fn shown(text: &str, whole: &str) -> String {
+    if text.chars().count() <= LINE_TEXT {
+        return text.to_owned();
+    }
+    let cut: String = text.chars().take(LINE_TEXT).collect();
+    let kept = match cut.rfind(char::is_whitespace) {
+        Some(at) if at >= cut.len() / 2 => &cut[..at],
+        _ => &cut[..],
+    };
+    format!("{}… {whole}", kept.trim_end())
+}
+
+/// The `bay.wake/1` request for `talk` to `me` on `machine`; a `line` of more than
+/// [`LINE_TEXT`] characters is cut and names the command that reads the whole talk.
 #[must_use]
 pub fn request(talk: &str, me: &Actor, machine: &str, urgent: bool, line: &str) -> Value {
-    let line: String = line.chars().take(200).collect();
+    let whole = format!(
+        "(read all of it: `git show {}{}/{talk}:{}`)",
+        super::TALK_PREFIX,
+        me.name,
+        super::TALK_FILE,
+    );
+    let line = shown(line, &whole);
     json!({
         "schema": "bay.wake/1", "op": "wake", "cause": "talk", "talk": talk,
         "actor": {"name": me.name, "session": me.session},
@@ -183,11 +212,13 @@ pub fn outcome_request(outcome: &Outcome, machine: &str) -> Value {
 
 /// The `bay.wake/1` request for the owner of a red, asked from `machine` (0.6.3): `cause:
 /// "red"`, the change, the check and the event, with the `actor`, `machine`, `urgent` and `line`
-/// fields a talk's request has. A red holds every change on its paths, so it is urgent; `line`
-/// is cut to 200 characters.
+/// fields a talk's request has. A red holds every change on its paths, so it is urgent. Its
+/// `line` keeps the fix command whole, after what the red is: that part is cut as a talk's text
+/// is, and then says `bay status` names the red.
 #[must_use]
 pub fn red_request(red: &RedOwner, machine: &str) -> Value {
-    let line: String = red.line.chars().take(200).collect();
+    let said = shown(red.said, "(`bay status` names the red)");
+    let line = crate::red_owner::with_fix(&said, red.fix);
     json!({
         "schema": "bay.wake/1", "op": "wake", "cause": "red",
         "change": red.change,
@@ -334,9 +365,75 @@ pub fn failed_because(why: &str, stderr: &[u8]) -> Value {
 
 #[cfg(test)]
 mod outcome_tests {
-    use super::{Outcome, outcome_request};
+    use super::{LINE_TEXT, Outcome, RedOwner, outcome_request, red_request, request};
     use crate::change::Actor;
     use crate::result::Decision;
+
+    /// BACKLOG 217. A red's wake line keeps the fix command whole, however long what it says the
+    /// red is: before, a line over 200 characters lost the command its reader had to run.
+    #[test]
+    fn a_long_red_line_keeps_its_fix_command() {
+        let me = Actor {
+            name: "seat-a".to_owned(),
+            session: "s1".to_owned(),
+        };
+        let said = "main is red on suite and holds the changes on its paths. ".repeat(5);
+        let red = RedOwner {
+            change: "abcd2345",
+            check: "suite",
+            event: "e1",
+            actor: &me,
+            said: &said,
+            fix: "bay start the fix --fixes abcd2345",
+        };
+        let told = red_request(&red, "m");
+        let line = told["line"].as_str().unwrap();
+        assert!(
+            line.ends_with(
+                "… (`bay status` names the red) Fix it: bay start the fix --fixes abcd2345"
+            ),
+            "{line}"
+        );
+        let short = RedOwner {
+            said: "main is red on suite.",
+            ..red
+        };
+        assert_eq!(
+            red_request(&short, "m")["line"],
+            "main is red on suite. Fix it: bay start the fix --fixes abcd2345"
+        );
+    }
+
+    /// BACKLOG 217. A talk's text of at most 200 characters is its line as it stands. A longer
+    /// one is cut at a word, marked, and names the command that reads all of it, so no reader
+    /// takes the cut line for the whole ask.
+    #[test]
+    fn a_long_talk_line_is_marked_cut_and_names_where_to_read_it() {
+        let me = Actor {
+            name: "seat-a".to_owned(),
+            session: "s1".to_owned(),
+        };
+        let short = "Rebase onto the new parser";
+        let told = request("tjouognjf6vzvo2r", &me, "m", false, short);
+        assert_eq!(told["line"], short);
+        let exact = "x".repeat(LINE_TEXT);
+        let told = request("tjouognjf6vzvo2r", &me, "m", false, &exact);
+        assert_eq!(told["line"], exact.as_str(), "200 characters are not cut");
+
+        let long = "Main checkouts: server1 is 89 commits behind devs. ".repeat(8);
+        let told = request("tjouognjf6vzvo2r", &me, "m", false, &long);
+        let line = told["line"].as_str().unwrap();
+        let (text, whole) = line.split_once("… ").expect("a cut line is marked");
+        assert!(text.chars().count() <= LINE_TEXT, "{line}");
+        assert!(
+            long.starts_with(text) && text.ends_with("behind"),
+            "cut at a word: {line}"
+        );
+        assert_eq!(
+            whole,
+            "(read all of it: `git show refs/bay/talk/seat-a/tjouognjf6vzvo2r:talk.json`)"
+        );
+    }
 
     #[test]
     fn an_outcome_line_names_the_change_by_its_intent() {

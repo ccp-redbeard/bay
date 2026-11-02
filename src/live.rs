@@ -434,13 +434,18 @@ fn lock_of(repo: &Repo) -> (PathBuf, Duration) {
     (bay_dir(repo).join("live-push.lock"), stale)
 }
 
-fn lock_is_held(lock: &Path, stale: Duration) -> bool {
+/// Whether the lock file at `lock` was made less than `stale` ago.
+#[must_use]
+pub fn lock_is_held(lock: &Path, stale: Duration) -> bool {
     std::fs::metadata(lock)
         .and_then(|meta| meta.modified())
         .is_ok_and(|at| at.elapsed().unwrap_or_default() < stale)
 }
 
-fn acquire(lock: &Path, stale: Duration) -> bool {
+/// Makes the lock file at `lock`, in place of one older than `stale`; `false` while another
+/// holds it.
+#[must_use]
+pub fn acquire(lock: &Path, stale: Duration) -> bool {
     let create = || {
         std::fs::OpenOptions::new()
             .write(true)

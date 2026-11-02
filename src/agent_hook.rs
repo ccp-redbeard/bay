@@ -337,6 +337,32 @@ pub struct Outcome {
     pub stderr: String,
 }
 
+/// BACKLOG 218: how long `bay hook` may wait for the remote, from its start
+/// ([`crate::deadline`]). A product ends a hook at its entry's timeout and drops what the hook
+/// says (Claude Code ended `UserPromptSubmit` at 30 s). The hook's poll runs in a child
+/// ([`crate::hook_poll`]); the budget bounds what stays in the hook, as the locks a write takes
+/// (G336), and what bay does after it reads and writes only this machine.
+pub const BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The budget of `bay hook <event>`: [`BUDGET`], or in a test build `BAY_TEST_HOOK_BUDGET_S`.
+/// `None` for the two moments that wait for the remote on purpose, under an entry timeout of their
+/// own: `talk-wait` and `tool.ask`.
+#[must_use]
+pub fn budget(event: &str) -> Option<std::time::Duration> {
+    if matches!(event, "talk-wait" | "tool.ask") {
+        return None;
+    }
+    Some(
+        std::env::var("BAY_TEST_HOOK_BUDGET_S")
+            .ok()
+            .filter(|_| TEST_HOOKS)
+            .and_then(|text| text.parse().ok())
+            .map_or(BUDGET, std::time::Duration::from_secs),
+    )
+}
+
+const TEST_HOOKS: bool = option_env!("BAY_RELEASE_VERSION").is_none();
+
 /// `bay hook <event>` with `input` on stdin, run in `dir`, for the configured product. The
 /// exit protocol of both products (`INTERFACES` § 1): exit 2 denies, with the reason on stderr.
 #[must_use]
@@ -363,13 +389,6 @@ fn dispatch_as(product: Product, caller: &str, event: &str, input: &str, dir: &P
     if let Some(why) = misnamed_tool_call(event, input) {
         return invalid_payload(product, input, dir, &why, true);
     }
-    // G54: a live session accepts its talks at most once per poll interval; what arrives is
-    // told by the talk notice at a later hook (G147).
-    if matches!(event, "turn.start" | "step.end")
-        && let Ok(repo) = crate::repo::Repo::open(dir)
-    {
-        let _ = crate::talk::poll::live(&repo, crate::live::unix_now());
-    }
     // `PreToolUse` is the blocking path (`onFailure: "block"`): § 11a gives it only the refusal,
     // and the same step's end (`PostToolBatch`, Codex's `PostToolUse`) records it.
     let mut recorded = crate::session::Recorded::default();
@@ -385,11 +404,16 @@ fn dispatch_as(product: Product, caller: &str, event: &str, input: &str, dir: &P
     if event == "tool.ask" {
         return ask(parsed.as_ref(), caller, input);
     }
-    if let Some(payload) = parsed.as_ref()
-        && payload.agent.is_none()
-    {
-        end_questions(payload);
-    }
+    // G54, G427, dossier 63, BACKLOG 218: what the hook asks of the remote (its talks, the
+    // fleet's presence, the end of its question talks) runs in a child it waits for a short
+    // while, so a slow remote holds no hook past the product's timeout.
+    let questions = parsed
+        .as_ref()
+        .filter(|payload| payload.agent.is_none())
+        .map(take_questions)
+        .unwrap_or_default();
+    let cwd = parsed.as_ref().map_or(dir, |payload| payload.cwd.as_path());
+    crate::hook_poll::start(cwd, event, &questions);
     if let Some(payload) = parsed
         && !matches!(payload.event, Event::Unprobed | Event::PreToolUse)
     {
@@ -523,13 +547,20 @@ fn answered(payload: &Payload, value: &Value, talks: &[String]) -> Option<Value>
     let prefix = format!("{}{}/", crate::talk::TALK_PREFIX, actor.name);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait);
     loop {
-        let _ = repo.git.run(&[
-            "fetch",
-            "-q",
-            "--no-tags",
-            repo.remote(),
-            &format!("+{prefix}*:{prefix}*"),
-        ]);
+        // BACKLOG 218: a fetch ends by the wait's own deadline, inside the entry's timeout.
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let _ = repo.git.run_bytes_for(
+            &[
+                "fetch",
+                "-q",
+                "--no-tags",
+                repo.remote(),
+                &format!("+{prefix}*:{prefix}*"),
+            ],
+            &[],
+            None,
+            left.clamp(ANSWER_POLL, crate::result::GIT_NETWORK_TIMEOUT),
+        );
         let trust = crate::talk::Trust::current(&repo.git).ok()??;
         let values: Option<Vec<String>> = talks
             .iter()
@@ -707,19 +738,19 @@ fn open_questions(dir: &Path) -> Vec<String> {
 }
 
 /// Dossier 63: any later event of the session means its question tool ended (answered at the
-/// terminal, or the session went on), so its open question talks close as `ended`.
-fn end_questions(payload: &Payload) {
+/// terminal, or the session went on), so its open question talks close as `ended`. Takes them
+/// from the session's state, for the hook's poll to close ([`crate::hook_poll`]).
+fn take_questions(payload: &Payload) -> Vec<String> {
     let (Some(session), Ok(repo)) = (&payload.session, crate::repo::Repo::open(&payload.cwd))
     else {
-        return;
+        return Vec::new();
     };
     let dir = crate::session::state_dir(&repo, session);
     let open = open_questions(&dir);
-    if open.is_empty() {
-        return;
+    if !open.is_empty() {
+        let _ = std::fs::remove_file(dir.join(QUESTIONS_FILE));
     }
-    crate::talk::end_questions(&repo, &open);
-    let _ = std::fs::remove_file(dir.join(QUESTIONS_FILE));
+    open
 }
 
 /// `tool.before`: a payload bay cannot read is denied (G59); else a write in another actor's view

@@ -1793,6 +1793,9 @@ fn execute_op(ctx: &mut Ctx, op_id: &str, trunk: String) -> Result<BayResult, St
     if let Some(waiting) = served_elsewhere(ctx, op_id, &revision, &trunk)? {
         return Ok(waiting);
     }
+    if let Some(waiting) = policy_unread_here(ctx, op_id, &trunk) {
+        return Ok(waiting);
+    }
     if let Some(report) = claim(ctx, op_id, &revision, &trunk)? {
         return Ok(report);
     }
@@ -2194,6 +2197,22 @@ fn ends_before_red(
 /// `remote: bay: ...`): a judgement, never a fault to retry.
 fn judged_by_bay(error: &str) -> bool {
     error.contains("remote: bay:")
+}
+
+/// Whether a refused push was refused because this machine may not update the ref (GitHub's
+/// GH013 rule violation, a protected ref or branch, an HTTP 403): a retry from here is refused
+/// the same way.
+fn refused_for_permission(error: &str) -> bool {
+    let said = host_said(error).to_lowercase();
+    [
+        "gh013",
+        "protected ref",
+        "protected branch",
+        "error: 403",
+        "permission to ",
+    ]
+    .iter()
+    .any(|sign| said.contains(sign))
 }
 
 /// BACKLOG 81: what the host said when it refused a push, for a one-line record: git's own
@@ -2861,6 +2880,25 @@ fn note_culprit(repo: &Repo, id: &str, op_id: &str, batch: &str) -> Result<bool,
     Ok(ctx.push_chain())
 }
 
+/// BACKLOG 216 (a fleet finding, 2026-11-02: cotffvzj): a host that refuses this box's push for
+/// permission refuses each retry the same way, so a change's own run gives the operation to the
+/// runners at once, with no retry counted, and says what the host said.
+fn left_to_the_runners(
+    ctx: &mut Ctx,
+    op_id: &str,
+    revision: &str,
+    error: &str,
+) -> Result<BayResult, String> {
+    let mut queued = enqueue(ctx, op_id, revision, Reason::Queued)?;
+    if let Some(detail) = queued.detail.as_mut() {
+        detail["yielded"] = json!(true);
+        detail["host_said"] = json!(host_said(error));
+        detail["recovery"] =
+            json!("the host does not let this machine push main: a runner merges this change");
+    }
+    Ok(queued)
+}
+
 /// A publishing push was refused (§ 6): reports the existing landing, retries the same
 /// candidate after a hook timeout, rejoins the queue, or moves to the new trunk (`None`: build
 /// and check again).
@@ -2960,6 +2998,9 @@ fn after_refused_push(
     // `failed`): trunk did not move, so the host's refusal is a fault of the push, never of the
     // change. The same candidate is pushed again after a short wait, uncounted toward
     // `MAIN_MOVED`, and the head keeps its place; five end it as `MERGE_RETRY_EXHAUSTED`.
+    if now == *trunk && ctx.visit == Visit::Own && refused_for_permission(error) {
+        return left_to_the_runners(ctx, op_id, revision, error).map(Some);
+    }
     if now == *trunk && !judged_by_bay(error) {
         if let Some(blocked) = uncounted_retry(
             ctx,
@@ -6903,6 +6944,36 @@ fn live_runner_serving(ctx: &Ctx, environments: &[String]) -> bool {
         })
 }
 
+/// BACKLOG 214 (a fleet finding, 2026-11-02: ftltlvo6): a change's own run (`bay merge --wait`)
+/// on a bay older than main's policy read that policy as invalid and refused the change with
+/// `POLICY_INVALID`, a refusal no session was told of, and a runner merged it minutes later. A
+/// policy this bay cannot read is a live runner's to judge: the run leaves the operation,
+/// unclaimed and in its place, writes nothing, and says to update bay. `None` for a runner's
+/// pass, when main's policy loads here, or when no other runner is live: the run then judges it
+/// as before (B2), so a repository with no runner still merges.
+fn policy_unread_here(ctx: &Ctx, op_id: &str, trunk: &str) -> Option<BayResult> {
+    if ctx.visit != Visit::Own {
+        return None;
+    }
+    let Err(policy::LoadError::Invalid(why)) = policy::load_at(&ctx.repo.git, trunk) else {
+        return None;
+    };
+    if !live_runner_serving(ctx, &[]) {
+        return None;
+    }
+    let mut result = BayResult::new(Decision::Queued)
+        .with_change(ctx.id.clone())
+        .with_op(op_id)
+        .with_detail(json!({
+            "yielded": true,
+            "policy_at": trunk,
+            "why": why,
+            "recovery": "your bay may be older than main's policy: run bay update; a runner merges this change",
+        }));
+    result.waiting_for = Some("executor".to_owned());
+    Some(result)
+}
+
 /// An operation waiting for a worker (§ 6, § 7) is passed over with nothing written while this
 /// box does not serve what it waits for, and, after an adapter's `unavailable` answer, until
 /// its rejoin gap has passed ([`rejoin_gap`]). Writing nothing is what lets the lease of the
@@ -8770,6 +8841,33 @@ mod tests {
             super::host_said("git push failed: timed out\n"),
             "git push failed: timed out"
         );
+    }
+
+    /// BACKLOG 216: a host's refusal for permission is told from a refusal a retry clears.
+    #[test]
+    fn a_refusal_for_permission_is_told_from_one_a_retry_clears() {
+        let push = "git push -q --atomic origin x:refs/heads/main failed: ";
+        for refused in [
+            "remote: error: GH013: Repository rule violations found for refs/heads/main.\n",
+            "remote: error: Cannot update this protected ref.\n ! [remote rejected] x -> main (protected branch hook declined)\n",
+            "remote: Permission to org/repo.git denied to someone.\nfatal: unable to access 'https://example/repo.git/': The requested URL returned error: 403\n",
+        ] {
+            assert!(
+                super::refused_for_permission(&format!("{push}{refused}")),
+                "{refused}"
+            );
+        }
+        for transient in [
+            "remote: error: GH009: something went wrong.\n",
+            " ! [remote rejected] x -> main (failed)\n",
+            "remote: bay: the publication queue is held\n",
+            "timed out\n",
+        ] {
+            assert!(
+                !super::refused_for_permission(&format!("{push}{transient}")),
+                "{transient}"
+            );
+        }
     }
 
     /// BACKLOG 90: only an added `git merge-tree` marker (labelled with a commit) marks a path;

@@ -68,6 +68,12 @@ pub fn registry_due(repo: &Repo, now: u64) -> bool {
     true
 }
 
+/// Whether a live session's poll ([`live`]) is due at `now`. Reads only.
+#[must_use]
+pub fn due(repo: &Repo, now: u64) -> bool {
+    read_last(&state_file(repo)).is_none_or(|last| now >= last.saturating_add(BAY_TALK_POLL_S))
+}
+
 /// A live session's hook (`UserPromptSubmit`, `PostToolUse`): accepts this actor's talks when
 /// the last fetch was [`BAY_TALK_POLL_S`] or more ago, and returns what it accepted; `None`
 /// when it was not due.

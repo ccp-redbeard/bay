@@ -400,13 +400,13 @@ pub fn any_fresh(rows: &[Value]) -> bool {
         .any(|row| row["readable"] == true && row["stale"] == false)
 }
 
-/// The operations of `record` that wait for an executor: neither ended nor blocked.
+/// The operations of `record` that wait for an executor ([`crate::change::ChangeRecord::waits`]).
 #[must_use]
 pub fn waiting(record: &crate::change::ChangeRecord) -> usize {
     record
         .operations
         .iter()
-        .filter(|op| !op.state.is_terminal() && op.state != crate::change::OpState::Blocked)
+        .filter(|op| record.waits(op))
         .count()
 }
 

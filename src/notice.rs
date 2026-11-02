@@ -566,7 +566,7 @@ fn conflicts(repo: &Repo, change: &str) -> Vec<Conflict> {
     record
         .operations
         .last()
-        .filter(|op| !op.state.is_terminal() && op.state != crate::change::OpState::Blocked)
+        .filter(|op| record.waits(op))
         .and_then(|op| {
             let found = op.early_conflict.as_ref()?;
             Some(Conflict {
@@ -1029,15 +1029,14 @@ pub fn no_executor(repo: &Repo, state_dir: &Path) -> Option<&'static str> {
     // G427 (a fleet finding, 2026-10-28): presence is judged from the last recorded fetch of
     // the fleet refs, which only `bay status` made. On a store where no one ran it for a
     // presence window, every presence read stale and every session was told no runner runs
-    // while runners merged; a seat that believes it starts one of its own. A record older than
-    // the window is fetched again first, and one that still cannot be had tells nothing.
+    // while runners merged; a seat that believes it starts one of its own. The hook's poll
+    // fetches a record older than the window ([`crate::hook_poll`], BACKLOG 218), and a record
+    // that is not fresh yet tells nothing and keeps the cursor.
     let window = repo.config.takeover().as_secs();
-    let fresh = |repo: &Repo| crate::fleet::fetched_age_s(repo).is_some_and(|age| age <= window);
-    if !fresh(repo) {
-        crate::fleet::fetch(repo);
+    if crate::fleet::fetched_age_s(repo).is_none_or(|age| age > window) {
+        return None;
     }
-    let waiting = fresh(repo)
-        && crate::presence::no_live_executor(repo, crate::presence::queued(repo)).is_some();
+    let waiting = crate::presence::no_live_executor(repo, crate::presence::queued(repo)).is_some();
     if waiting == cursor.no_executor {
         return None;
     }
@@ -1104,10 +1103,27 @@ fn red_line(change: &str, event: &Value) -> String {
         .as_str()
         .and_then(crate::red::shown_check)
         .unwrap_or("a post check");
-    let how = if event["culprit"] == true {
-        "broke it: the check passed on the merge before it and failed on it"
-    } else {
-        "is where it was first seen failing, not a proven cause"
+    let how = match event["units"].as_array().map(Vec::len) {
+        // G630: told of units its red's first failure did not fail.
+        Some(units) => {
+            let more = if units == 1 {
+                "1 more unit".to_owned()
+            } else {
+                format!("{units} more units")
+            };
+            let place = match event["among"].as_u64() {
+                Some(1) => "is the one merge on its paths since the failing run before".to_owned(),
+                Some(n) if n > 1 => {
+                    format!("is one of {n} merges on its paths since the failing run before")
+                }
+                _ => "is where they were first seen failing".to_owned(),
+            };
+            format!("{place}: it now fails on {more}, not a proven cause")
+        }
+        None if event["culprit"] == true => {
+            "broke it: the check passed on the merge before it and failed on it".to_owned()
+        }
+        None => "is where it was first seen failing, not a proven cause".to_owned(),
     };
     let mut out: String = format!(
         "bay: change {change}: main is red on {check}; your change {how}. Changes on its paths \
@@ -1515,5 +1531,36 @@ mod tests {
         );
         let event = serde_json::json!({"kind": "red_owner", "check": "x".repeat(65)});
         assert!(line("abcd1234", "red_owner", &event).contains("red on a post check;"));
+    }
+
+    /// G630: a change told of units its red's first failure did not fail is told how many and
+    /// among how many merges, never their names, and never that it broke the check.
+    #[test]
+    fn a_unit_owner_line_counts_the_units_and_the_merges() {
+        let event = serde_json::json!({
+            "kind": "red_owner", "check": "suite", "culprit": true,
+            "units": ["t2; rm -rf /"], "among": 1,
+        });
+        let told = line("abcd1234", "red_owner", &event);
+        assert_eq!(
+            told,
+            "bay: change abcd1234: main is red on suite; your change is the one merge on its \
+             paths since the failing run before: it now fails on 1 more unit, not a proven cause. \
+             Changes on its paths wait. Fix it with a new change: bay start <intent> --fixes \
+             abcd1234\n"
+        );
+        let event = serde_json::json!({
+            "kind": "red_owner", "check": "suite", "units": ["t2", "t4"], "among": 3,
+        });
+        assert!(
+            line("abcd1234", "red_owner", &event)
+                .contains("is one of 3 merges on its paths since the failing run before: it now fails on 2 more units"),
+        );
+        let event = serde_json::json!({
+            "kind": "red_owner", "check": "suite", "units": ["t2"], "among": 0,
+        });
+        assert!(line("abcd1234", "red_owner", &event).contains(
+            "your change is where they were first seen failing: it now fails on 1 more unit"
+        ));
     }
 }

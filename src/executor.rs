@@ -545,7 +545,7 @@ fn successor(record: &ChangeRecord, op_id: &str) -> Option<String> {
         .operations
         .iter()
         .rev()
-        .find(|op| !op.state.is_terminal() && op.state != OpState::Blocked)
+        .find(|op| record.waits(op))
         .map(|op| op.op_id.clone())
 }
 
@@ -677,8 +677,8 @@ fn pass(
     sweep_ended(repo, &queue, &records);
     let holding = records
         .iter()
-        .flat_map(|record| &record.operations)
-        .find(|op| !op.state.is_terminal() && op.state != OpState::Blocked)
+        .flat_map(|record| record.operations.iter().filter(|op| record.waits(op)))
+        .next()
         .map(|op| op.op_id.as_str());
     let depth = queue
         .entries
@@ -713,7 +713,7 @@ fn pass(
             // be the repair of a red main, which runs ahead of the line (`queue_gate`).
             // A fleet finding (2026-10-27): an abandoned change's older operation was still
             // queued and run hours later. No operation of an ended change runs.
-            .filter(|_| !change_ended(record))
+            .filter(|_| !record.ended())
             .filter(|op| !parked.holds(&op.op_id))
             .filter(|op| runs(op) && (names_a_repair(record) || reach(op, freed(&ran))))
             .filter(|op| !taken.contains(&op.op_id))
@@ -1222,7 +1222,7 @@ impl Arrivals {
                     .iter()
                     .rev()
                     .find_map(|op| op.request_id.clone());
-                (record.id.clone(), latest.filter(|_| !change_ended(record)))
+                (record.id.clone(), latest.filter(|_| !record.ended()))
             })
             .collect();
         Self {
@@ -1305,7 +1305,7 @@ impl Arrivals {
 /// change whose operation `holding` the pass runs. Its row, and one journal line.
 fn place_arrival(repo: &Repo, change: &str, request: &str, holding: &str) -> Option<Value> {
     let (_, record) = Chain::new(&repo.git).read(change).ok()?;
-    if change_ended(&record)
+    if record.ended()
         || record.lane.is_some()
         || record.operations.iter().any(|op| op.op_id == holding)
     {
@@ -1421,7 +1421,7 @@ fn sweep_ended(repo: &Repo, queue: &Queue, records: &[ChangeRecord]) {
             continue;
         };
         let op_ended = op.state.is_terminal() || op.state == OpState::Blocked;
-        if !(op_ended || change_ended(record)) {
+        if !(op_ended || record.ended()) {
             continue;
         }
         let reason = if op_ended {
@@ -1439,25 +1439,6 @@ fn sweep_ended(repo: &Repo, queue: &Queue, records: &[ChangeRecord]) {
             );
         }
     }
-}
-
-/// Whether `record`'s change has ended (abandoned, superseded, merged, or its work already on
-/// trunk): none of its operations runs again, whatever state an older one was left in.
-fn change_ended(record: &ChangeRecord) -> bool {
-    matches!(
-        record.state,
-        crate::change::ChangeState::Abandoned
-            | crate::change::ChangeState::Superseded
-            | crate::change::ChangeState::Landed
-            | crate::change::ChangeState::NoEffect
-    )
-    // A fleet finding (2026-10-27): a change an older bay reopened after it merged read `ready`
-    // with a later revision `submitted`; every runner took that revision each pass and refused it
-    // as already merged, a receipt each time. A change with a published operation is on main.
-    || record
-        .operations
-        .iter()
-        .any(|op| op.state == OpState::Published)
 }
 
 /// The release reason for a place of an ended change: its state's word.
@@ -1691,7 +1672,7 @@ fn early_conflicts(repo: &Repo, queue: &Queue) -> Vec<Value> {
             .operations
             .iter()
             .find(|op| op.op_id == entry.op_id)
-            .filter(|op| !op.state.is_terminal() && op.state != OpState::Blocked)
+            .filter(|op| record.waits(op))
         else {
             continue;
         };
@@ -1815,15 +1796,45 @@ mod tests {
     #[test]
     fn a_change_with_a_published_operation_has_ended() {
         let mut reopened = held("hxzd0001", "submitted", 1).record;
-        assert!(!super::change_ended(&reopened));
+        assert!(!reopened.ended());
         let mut first = reopened.operations[0].clone();
         first.op_id = "hxzd0001.0".to_owned();
         first.state = crate::change::OpState::Published;
         reopened.operations.insert(0, first);
+        assert!(reopened.ended(), "a published operation ends the change");
+    }
+
+    /// BACKLOG 213 (a fleet finding, 2026-11-02: a change landed 10-28 with a later revision
+    /// still `admitted`, and three runners named that revision as the operation they held for
+    /// five days). An ended change's operation waits for no executor, whatever state it was left
+    /// in: no runner names it as held, and no session counts it as waiting.
+    #[test]
+    fn an_ended_changes_operation_waits_for_no_executor() {
+        let open = held("kgsg0001", "admitted", 1).record;
         assert!(
-            super::change_ended(&reopened),
-            "a published operation ends the change"
+            open.waits(&open.operations[0]),
+            "an open change's admitted revision"
         );
+        assert_eq!(crate::presence::waiting(&open), 1);
+
+        let mut landed = open.clone();
+        let mut first = landed.operations[0].clone();
+        first.op_id = "kgsg0001.0".to_owned();
+        first.state = crate::change::OpState::Published;
+        landed.operations.insert(0, first);
+        assert!(
+            !landed.waits(&landed.operations[1]),
+            "a revision left after the merge"
+        );
+        assert_eq!(crate::presence::waiting(&landed), 0);
+
+        let mut abandoned = open;
+        abandoned.state = crate::change::ChangeState::Abandoned;
+        assert!(
+            !abandoned.waits(&abandoned.operations[0]),
+            "an abandoned change's revision"
+        );
+        assert_eq!(crate::presence::waiting(&abandoned), 0);
     }
 
     /// A fleet finding (2026-10-27): a runner that held a checked head ran five post checks
@@ -1849,7 +1860,7 @@ mod tests {
     #[test]
     fn an_ended_change_never_runs_whatever_its_operations_say() {
         let mut open = held("open0001", "admitted", 1).record;
-        assert!(!super::change_ended(&open));
+        assert!(!open.ended());
         for state in [
             crate::change::ChangeState::Abandoned,
             crate::change::ChangeState::Superseded,
@@ -1857,7 +1868,7 @@ mod tests {
             crate::change::ChangeState::NoEffect,
         ] {
             open.state = state;
-            assert!(super::change_ended(&open), "{state:?}");
+            assert!(open.ended(), "{state:?}");
         }
         assert_eq!(
             super::word_of_change(&open),

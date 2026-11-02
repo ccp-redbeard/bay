@@ -12,15 +12,27 @@
 //! `line` names the check, where it failed and the exact fix to run. A red a fix already answers
 //! (its run not passed yet) tells no one, and a red whose failing landing names no change has no
 //! one to tell.
+//!
+//! G630 (a fleet finding, 2026-11-02: a red came back on another unit after a fix landed, and the
+//! session of the merge that broke the new unit was told nothing, because the red's owner stays
+//! its first failure): a red that fails on units its first failure did not is told again, to the
+//! merges on the check's paths between the run where those units first failed and the failing run
+//! before it, or to that landing when none was on its paths. Each is told once per check, in an
+//! event with the units; the evidence does not prove which of them broke the units, and the line
+//! says so.
+
+use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
 use crate::canonical::digest;
 use crate::change::{Chain, ChangeRecord};
-use crate::red::Red;
+use crate::evidence::{self, CheckId, EvidenceRecord, Verdict};
+use crate::git::Git;
+use crate::red::{Mark, Red};
 use crate::registry::Registry;
 use crate::repo::Repo;
-use crate::signing::Keys;
+use crate::signing::{Keys, Signer};
 
 /// The event kind.
 pub const KIND: &str = "red_owner";
@@ -43,7 +55,7 @@ fn told(repo: &Repo, trunk: &str) -> Result<Vec<Value>, String> {
     let held = crate::log::held_events(git)?;
     let keys = Keys::load(git);
     // N-21: executor logs are signed only where the registry signs everything.
-    let signer = match registry.filter(Registry::signs_all) {
+    let signer = match registry.as_ref().filter(|registry| registry.signs_all()) {
         None => None,
         Some(_) => Some(keys.executor.clone().ok_or(
             "the repository has a key registry and this machine has no runner key (git config bay.runnerKey)",
@@ -51,51 +63,215 @@ fn told(repo: &Repo, trunk: &str) -> Result<Vec<Value>, String> {
     };
     let chain = Chain::new(git);
     let mut notes = Vec::new();
+    let mut written = BTreeSet::new();
     for red in &reds {
-        let Some(owner) = red.fixes() else {
-            continue;
-        };
-        let id = event_id(red, owner)?;
-        if held.contains(&id) {
-            continue;
+        let mut owners: Vec<(String, Owns)> = red
+            .fixes()
+            .map(|owner| (owner.clone(), Owns::Red))
+            .into_iter()
+            .collect();
+        // A fault reading the units leaves the red's own owner told.
+        match unit_owners(git, registry.as_ref(), red) {
+            Ok(more) => owners.extend(more),
+            Err(error) => {
+                notes.push(json!({"red_owner": null, "check": red.check, "error": error}));
+            }
         }
-        let Ok((_, record)) = chain.read(owner) else {
-            continue;
-        };
-        let mut event = event(&id, red, &record);
-        if crate::talk::wake::configured(repo) {
-            event["wake"] = crate::talk::wake::wake_red(
-                repo,
-                &crate::talk::wake::RedOwner {
-                    change: &record.id,
-                    check: &red.check,
-                    event: &id,
-                    actor: &record.actor,
-                    line: event["line"].as_str().unwrap_or_default(),
-                },
-            );
+        for (owner, owns) in &owners {
+            let id = event_id(red, owner, owns)?;
+            if held.contains(&id) || !written.insert(id.clone()) {
+                continue;
+            }
+            let Ok((_, record)) = chain.read(owner) else {
+                continue;
+            };
+            told_one(repo, (&keys, signer.as_ref()), red, (&id, owns, &record))?;
+            notes.push(json!({"red_owner": owner, "check": red.check, "event": id}));
         }
-        crate::log::append(repo, &keys.executor_name, signer.as_ref(), &event)?;
-        let _ = crate::notify::notify(repo, &event);
-        notes.push(json!({"red_owner": owner, "check": red.check, "event": id}));
     }
     Ok(notes)
 }
 
-/// The id of the `red_owner` event of `red`, owned by `owner`: one red, one event.
-fn event_id(red: &Red, owner: &str) -> Result<String, String> {
-    let id = digest(&json!({
+/// Writes the `red_owner` event `id` of `red` to `record`'s change, wakes its session once and
+/// tells the notify adapter.
+fn told_one(
+    repo: &Repo,
+    (keys, signer): (&Keys, Option<&Signer>),
+    red: &Red,
+    (id, owns, record): (&str, &Owns, &ChangeRecord),
+) -> Result<(), String> {
+    let mut event = event(id, red, owns, record);
+    if crate::talk::wake::configured(repo) {
+        event["wake"] = crate::talk::wake::wake_red(
+            repo,
+            &crate::talk::wake::RedOwner {
+                change: &record.id,
+                check: &red.check,
+                event: id,
+                actor: &record.actor,
+                said: &said(red, owns, record),
+                fix: &fix_command(record),
+            },
+        );
+    }
+    crate::log::append(repo, &keys.executor_name, signer, &event)?;
+    let _ = crate::notify::notify(repo, &event);
+    Ok(())
+}
+
+/// What a `red_owner` event tells its change.
+#[derive(Debug, PartialEq, Eq)]
+enum Owns {
+    /// The red: [`Red::fixes`] names the change.
+    Red,
+    /// G630: the units that failed first after the red's first failure. The change is one of
+    /// `among` merges on the check's paths since the failing run before; `among` is 0 when none
+    /// was, and the change is where they were first seen failing.
+    Units { units: Vec<String>, among: usize },
+}
+
+/// G630: the changes to tell of `red`'s units that its first failure did not fail, each with
+/// them, oldest first. The failing runs are read at the first failure and each landing after
+/// it, in one read of their evidence ([`evidence::records_for_many`]) and one of their changed
+/// paths ([`crate::check::changed_paths_many`]). The red's own owner is never one of them.
+fn unit_owners(
+    git: &Git,
+    registry: Option<&Registry>,
+    red: &Red,
+) -> Result<Vec<(String, Owns)>, String> {
+    let Some(suspect) = &red.suspect else {
+        return Ok(Vec::new());
+    };
+    if suspect.failing.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks: Vec<&Mark> = std::iter::once(&suspect.failed)
+        .chain(&suspect.failing)
+        .collect();
+    // One `rev-parse`: each landing's tree, then the first parent of each landing after the
+    // first failure.
+    let mut names: Vec<String> = marks
+        .iter()
+        .map(|mark| format!("{}^{{tree}}", mark.landing))
+        .collect();
+    names.extend(marks[1..].iter().map(|mark| format!("{}^1", mark.landing)));
+    let mut args = vec!["rev-parse"];
+    args.extend(names.iter().map(String::as_str));
+    let out = git.run(&args).map_err(|error| error.message())?;
+    let ids: Vec<&str> = out.lines().collect();
+    if ids.len() != names.len() {
+        return Err(format!(
+            "git rev-parse gave {} of {} names",
+            ids.len(),
+            names.len()
+        ));
+    }
+    let (trees, parents) = ids.split_at(marks.len());
+    let id = CheckId::new(&red.check, &red.environment);
+    let mut failed = Vec::with_capacity(marks.len());
+    for records in evidence::records_for_many(git, trees)? {
+        failed.push(failed_units(
+            &evidence::counted(git, records, registry)?,
+            &id,
+        ));
+    }
+    let Some(Some(first)) = failed.first() else {
+        return Ok(Vec::new());
+    };
+    let pairs: Vec<(&str, &str)> = marks[1..]
+        .iter()
+        .zip(parents)
+        .map(|(mark, parent)| (mark.landing.as_str(), *parent))
+        .collect();
+    let changed = crate::check::changed_paths_many(git, &pairs)?;
+    let mut known: BTreeSet<String> = first.iter().cloned().collect();
+    let mut owners = Vec::new();
+    let mut before = 0;
+    for (at, units) in failed.iter().enumerate().skip(1) {
+        let Some(units) = units else {
+            continue;
+        };
+        let new: Vec<String> = units
+            .iter()
+            .filter(|unit| !known.contains(*unit))
+            .cloned()
+            .collect();
+        let since = before;
+        before = at;
+        if new.is_empty() {
+            continue;
+        }
+        // `changed[n]` is the paths of `marks[n + 1]`.
+        let on_paths: Vec<&Mark> = (since + 1..=at)
+            .filter(|n| red.covers(&changed[n - 1]))
+            .map(|n| marks[n])
+            .collect();
+        let among = on_paths.len();
+        let to_tell = if on_paths.is_empty() {
+            vec![marks[at]]
+        } else {
+            on_paths
+        };
+        for mark in to_tell {
+            if let Some(change) = &mark.change
+                && Some(change) != red.fixes()
+            {
+                owners.push((
+                    change.clone(),
+                    Owns::Units {
+                        units: new.clone(),
+                        among,
+                    },
+                ));
+            }
+        }
+        known.extend(new);
+    }
+    Ok(owners)
+}
+
+/// The units the newest `product_failure` record of `id` among `records` failed, sorted, once
+/// each; `None` when no such record is there (the check did not run, or did not fail).
+fn failed_units(records: &[EvidenceRecord], id: &CheckId) -> Option<Vec<String>> {
+    let newest = records
+        .iter()
+        .filter(|record| {
+            record.kind == evidence::KIND_CHECK
+                && record.check == *id
+                && record.verdict == Verdict::ProductFailure
+        })
+        .max_by(|one, other| one.at.cmp(&other.at))?;
+    let mut units: Vec<String> = newest
+        .units
+        .iter()
+        .filter(|unit| unit.verdict == Verdict::ProductFailure)
+        .map(|unit| unit.id.clone())
+        .collect();
+    units.sort();
+    units.dedup();
+    Some(units)
+}
+
+/// The id of the `red_owner` event of `red`, owned by `owner`: one red, one event. A change told
+/// of units (G630) is told once per check too; its id is not the one it would have as the red's
+/// owner, so a later red that it owns is still told.
+fn event_id(red: &Red, owner: &str, owns: &Owns) -> Result<String, String> {
+    let mut fields = json!({
         "kind": KIND,
         "check": red.check,
         "environment": red.environment,
         "owner": owner,
-    }))?;
+    });
+    if matches!(owns, Owns::Units { .. }) {
+        fields["owns"] = json!("units");
+    }
+    let id = digest(&fields)?;
     Ok(format!("evt_{}", &id.trim_start_matches("sha256:")[..20]))
 }
 
-/// The `red_owner` event `id` of `red`, for `record`, the change that owns it.
-fn event(id: &str, red: &Red, record: &ChangeRecord) -> Value {
-    json!({
+/// The `red_owner` event `id` of `red`, for `record`, the change it tells.
+fn event(id: &str, red: &Red, owns: &Owns, record: &ChangeRecord) -> Value {
+    let mut event = json!({
         "schema": crate::log::EVENT_SCHEMA,
         "id": id,
         "at": crate::clock::now_rfc3339(),
@@ -105,12 +281,17 @@ fn event(id: &str, red: &Red, record: &ChangeRecord) -> Value {
         "check": red.check,
         "environment": red.environment,
         "landing": red.landing,
-        "culprit": red.culprit().is_some(),
+        "culprit": *owns == Owns::Red && red.culprit().is_some(),
         "fix": fix_command(record),
-        "line": line(red, record),
+        "line": with_fix(&said(red, owns, record), &fix_command(record)),
         "detail": red.to_json(),
         "recurrence_key": format!("{KIND}/{}/{}", red.check, red.environment),
-    })
+    });
+    if let Owns::Units { units, among } = owns {
+        event["units"] = json!(units);
+        event["among"] = json!(among);
+    }
+    event
 }
 
 /// The command that opens the fix: a new change of the owner's intent that names it.
@@ -121,18 +302,36 @@ fn fix_command(record: &ChangeRecord) -> String {
     )
 }
 
-/// The one sentence the owner's session is told: the check, whether the evidence proves the
-/// change broke it or only saw it failing there, what the red holds, and the fix to run.
-fn line(red: &Red, record: &ChangeRecord) -> String {
+/// The line the owner's session is told: what the red is ([`said`]), then the fix to run.
+#[must_use]
+pub fn with_fix(said: &str, fix: &str) -> String {
+    format!("{said} Fix it: {fix}")
+}
+
+/// What the owner's session is told the red is: the check, whether the evidence proves the
+/// change broke it or only saw it failing there, and what the red holds.
+fn said(red: &Red, owns: &Owns, record: &ChangeRecord) -> String {
     let named = crate::change::shown(&record.intent.reference, &record.id);
-    let how = if red.culprit().is_some() {
-        "broke it: the check passed on the merge before it and failed on it"
-    } else {
-        "is where it was first seen failing, not a proven cause"
+    let how = match owns {
+        Owns::Red if red.culprit().is_some() => {
+            "broke it: the check passed on the merge before it and failed on it".to_owned()
+        }
+        Owns::Red => "is where it was first seen failing, not a proven cause".to_owned(),
+        Owns::Units { units, among } => {
+            let more = match units.len() {
+                1 => "1 more unit".to_owned(),
+                n => format!("{n} more units"),
+            };
+            let place = match among {
+                0 => "is where they were first seen failing".to_owned(),
+                1 => "is the one merge on its paths since the failing run before".to_owned(),
+                n => format!("is one of {n} merges on its paths since the failing run before"),
+            };
+            format!("{place}: it now fails on {more}, not a proven cause")
+        }
     };
     format!(
-        "main is red on {}; your change {named} {how}. Changes on its paths wait. Fix it: {}",
-        red.check,
-        fix_command(record)
+        "main is red on {}; your change {named} {how}. Changes on its paths wait.",
+        red.check
     )
 }

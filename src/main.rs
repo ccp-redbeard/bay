@@ -513,6 +513,19 @@ enum LiveAction {
     /// Checkpoint a change's view and push its chain (started by the agent hook at a session's
     /// end and on its idle timer)
     Checkpoint { change: String },
+    /// Poll the remote for a session (started by the agent hook, which waits for it a short
+    /// while): accept this actor's talks, fetch the fleet's presence, close question talks
+    Poll {
+        /// Accept this actor's talks
+        #[arg(long)]
+        talks: bool,
+        /// Fetch the fleet's presence
+        #[arg(long)]
+        fleet: bool,
+        /// A question talk to close as ended (repeatable)
+        #[arg(long = "end-question", value_name = "TALK")]
+        end_question: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -964,6 +977,11 @@ fn main() -> ExitCode {
         Command::Plugin { action } => plugin(&cli.dir, action),
         Command::Help { command } => return help(&command, cli.json),
         Command::Hook { event } => {
+            // BACKLOG 218: the hook ends its wait for the remote in time for the product to read
+            // what it says.
+            if let Some(budget) = bay::agent_hook::budget(&event) {
+                bay::deadline::set(std::time::Instant::now() + budget);
+            }
             // The agent hook follows the agent product's exit protocol (INTERFACES § 1): for
             // Claude Code, exit 2 denies. The payload adapter decides (agent_hook.rs).
             let mut input = String::new();
@@ -1030,6 +1048,11 @@ fn live(dir: &std::path::Path, action: LiveAction) -> BayResult {
     match action {
         LiveAction::Push => bay::live::push(dir),
         LiveAction::Checkpoint { change } => bay::start::checkpoint(dir, &change),
+        LiveAction::Poll {
+            talks,
+            fleet,
+            end_question,
+        } => bay::hook_poll::run(dir, talks, fleet, &end_question),
     }
 }
 
