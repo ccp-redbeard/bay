@@ -1,4 +1,4 @@
-//! G629 (a fleet finding, 2026-11-02: after its red, edge-py-fast ran 2,073 units on each new
+//! G629 (a fleet finding, 2026-11-02: after its red, a Python check ran 2,073 units on each new
 //! tip, in 627-645 s). A red post check whose newest failing run was asked its failed units again
 //! and answered each one is asked what changed since that run's landing, and runs its failed
 //! units.

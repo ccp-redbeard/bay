@@ -6,7 +6,7 @@
 //! the check starts with that tree as its working directory. Neither its absolute path nor a path
 //! inside the tree holds `/.git`: a tool may leave out every path that does (TypeScript keeps no
 //! symlink there, so a pnpm workspace could not name its own packages' types: `TS2742`, 105 units
-//! of a fleet's `world-fast`, 2026-10-28, while bay made trees under `<common dir>/bay/check/`).
+//! of a TypeScript check, 2026-10-28, while bay made trees under `<common dir>/bay/check/`).
 //! An adapter that leaves out files by their path parts still judges them relative to its
 //! working directory, and a clean candidate passes.
 //!

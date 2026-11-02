@@ -428,7 +428,7 @@ pub struct Baseline {
 /// Never under the repository: a tool may leave out every path that holds `/.git`, and then a
 /// tree there is not what it is elsewhere. TypeScript keeps no symlink whose path holds `/.git`,
 /// so in a pnpm workspace there it cannot name a type through the package that links it, and
-/// declarations fail with `TS2742` (a fleet's `world-fast`: 105 units, 2026-10-28).
+/// declarations fail with `TS2742` (a fleet's TypeScript check: 105 units, 2026-10-28).
 ///
 /// # Errors
 ///
@@ -1466,7 +1466,7 @@ fn run_serial(
     Ok(None)
 }
 
-/// 0.6.6 (a fleet finding, 2026-10-30: edge-py-fast, designer-fast and studio-fast each turned
+/// 0.6.6 (a fleet finding, 2026-10-30: a Python check and two TypeScript checks each turned
 /// main red on one flaky unit overnight, and each red held its paths for one full run, 9 to 12
 /// minutes): the candidate a check's `run`th run asks. A rerun after a failure that named its
 /// `failed` units asks again for those units alone, with `retry` its number, so a flake costs
@@ -2522,7 +2522,7 @@ fn judge_units(
             units,
         );
     }
-    // G540 (a fleet finding, 2026-10-29: scripts-fast failed on 3 units, and every later post
+    // G540 (a fleet finding, 2026-10-29: a scripts check failed on 3 units, and every later post
     // run, asked only about files no test reads, reached none of them): a red check's run that
     // does not answer each unit it was asked to run again is no pass, so it never clears the red.
     let missed = missed_reruns(rerun, &units, &result.plan.gone, retry);

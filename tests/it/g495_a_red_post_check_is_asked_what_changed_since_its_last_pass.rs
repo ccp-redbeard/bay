@@ -1,4 +1,4 @@
-//! G495 (a fleet finding, 2026-10-29: after its red, edge-py-fast answered "collected 0 of 1" on
+//! G495 (a fleet finding, 2026-10-29: after its red, a Python check answered "collected 0 of 1" on
 //! four tips in a row, so it could never pass again and every change on its paths waited). A red
 //! post check is asked what changed since its newest pass before the failure, so a suite that picks
 //! its tests by changed paths runs the failing tests again.

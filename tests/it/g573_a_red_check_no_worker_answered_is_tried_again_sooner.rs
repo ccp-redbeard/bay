@@ -1,4 +1,4 @@
-//! G573 (a fleet finding, 2026-10-29: scripts-fast's fix waited for its run, one worker did not
+//! G573 (a fleet finding, 2026-10-29: a scripts check's fix waited for its run, one worker did not
 //! answer that run, and ten changes on its paths waited a whole hour before the runner tried the
 //! check again). A post check no worker answers waits before its box tries it again (G449); a
 //! check that holds changes, a red one or one whose fix waits for its run, waits five minutes,

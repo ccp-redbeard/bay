@@ -1,4 +1,4 @@
-//! G533 (bay 0.6.1, BACKLOG 121; a fleet finding, 2026-10-28 22:48Z: a red row of scripts-fast
+//! G533 (bay 0.6.1, BACKLOG 121; a fleet finding, 2026-10-28 22:48Z: a red row of a scripts check
 //! named a change the check never judged, and readers took it as the cause). Without a culprit,
 //! a red row's owner and its first failure are only where the check was seen failing, never a
 //! proven cause: the row's `say` says so, and names how many merges since the last pass the

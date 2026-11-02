@@ -223,7 +223,7 @@ fn a_post_check_nothing_answered_goes_before_one_answered_on_an_older_tip() {
 
 /// G433 (a fleet finding, 2026-10-28): a post check that only ever answers `unknown` stays
 /// pending, so it went first on every new tip and the checks after it in the policy never ran
-/// (edge-py-fast, fifth on its box, ran on no tip for eight hours). The check this box ran
+/// (a Python check, fifth on its box, ran on no tip for eight hours). The check this box ran
 /// longest ago goes first, so each runs in turn.
 #[test]
 fn a_post_check_that_never_answers_starves_no_other() {

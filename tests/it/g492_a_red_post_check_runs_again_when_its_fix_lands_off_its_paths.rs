@@ -1,4 +1,4 @@
-//! G492 (a fleet finding, 2026-10-28: scripts-fast stayed red for three hours after both of its
+//! G492 (a fleet finding, 2026-10-28: a scripts check stayed red for three hours after both of its
 //! causes were fixed in files off its paths, and every change on its paths waited on it). A red
 //! post check runs again on a new tip of main even when nothing on its paths changed, so a fix
 //! that landed off its paths clears it.

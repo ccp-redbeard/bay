@@ -1,5 +1,5 @@
-//! G572 (a fleet finding, 2026-10-29: a fix for records-refs waited `MAIN_RED` behind
-//! scripts-fast, whose own fix was on main and waited only for the run on it, and that run
+//! G572 (a fleet finding, 2026-10-29: a fix for one check waited `MAIN_RED` behind
+//! a scripts check, whose own fix was on main and waited only for the run on it, and that run
 //! waited for a worker). A repair, a change that answers one red post check, passes a check
 //! that is `pending_fix` and does not hold it: that check's fix is on main already, and only its
 //! run decides. It still waits for a check that is red, and a change that repairs nothing still

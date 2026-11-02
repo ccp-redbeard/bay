@@ -1,4 +1,4 @@
-//! G580 (0.6.6; a fleet finding, 2026-10-30: edge-py-fast, designer-fast and studio-fast each
+//! G580 (0.6.6; a fleet finding, 2026-10-30: a Python check and two TypeScript checks each
 //! turned main red on one flaky unit overnight, and each red held its paths for one full run).
 //! A post check may say `retry_on_failure`: a run on main's tip that fails asks its adapter once
 //! more for the units it failed, alone (`retry`, with `rerun` those units). A pass then is

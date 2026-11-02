@@ -1,4 +1,4 @@
-//! G540 (a fleet finding, 2026-10-29: scripts-fast failed on 3 units and stayed red). A red post
+//! G540 (a fleet finding, 2026-10-29: a scripts check failed on 3 units and stayed red). A red post
 //! check's request names the units that failed in its newest failing record (`rerun`), and a run
 //! that does not answer each of them is never green.
 //!

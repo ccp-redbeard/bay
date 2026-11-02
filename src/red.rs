@@ -668,7 +668,7 @@ pub fn repairs(
 /// The ones of `reds`, the holding checks of trunk ([`holding`]), that hold a change changing
 /// `changed` whose `Fixes:`, `Reverts:` and `Supersedes:` name `names`: each covers a path it
 /// changes, and it does not answer it ([`Red::answered_by`]). G572 (a fleet finding,
-/// 2026-10-29: a fix for records-refs waited behind scripts-fast, whose own fix was on main and
+/// 2026-10-29: a fix for one check waited behind a scripts check, whose own fix was on main and
 /// waited only for its run, and that run waited for a worker): a repair, a change that answers
 /// one of `reds`, also passes a check that is [`PENDING_FIX`]. That check's fix is on main
 /// already; only its run decides, and the repair runs ahead of the line, so it never waits for

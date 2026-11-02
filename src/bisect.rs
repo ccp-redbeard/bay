@@ -251,13 +251,13 @@ fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
     let registry = Registry::current(git)?;
     let tree = tree_of(git, &tip)?;
     let writer = Writer::of(git, &keys, registry.as_ref())?;
-    // A fleet finding (2026-10-28: scripts-fast stayed red for three hours after both of its
+    // A fleet finding (2026-10-28: a scripts check stayed red for three hours after both of its
     // causes were fixed in files off its paths, and every change on its paths waited on it): a
     // red check runs again on each new tip, first (after a check starved for half the red
     // window, G582), even when nothing on its paths changed, so a fix that landed anywhere can
     // clear it.
     //
-    // E39 (a fleet finding, 2026-10-29: after a fix named edge-py-fast's owner, its next post runs
+    // E39 (a fleet finding, 2026-10-29: once a fix named a Python check's owner, its next post runs
     // asked about one landing alone and named no failed unit, so five known failing units went
     // unrun): a check whose fix waits for its run (`pending_fix`) is asked what a red check is
     // asked, so the run that answers the fix runs the failing units.
@@ -302,14 +302,14 @@ fn tips(repo: &Repo, taken: &BTreeSet<String>) -> Result<Planned, String> {
         // changed since this box last answered it, and not run when nothing in that range
         // wakes it.
         //
-        // G495 (a fleet finding, 2026-10-29: after its red, edge-py-fast answered "collected 0 of 1"
+        // G495 (a fleet finding, 2026-10-29: once red, a Python check answered "collected 0 of 1"
         // on four tips in a row, so it could never pass again): a red check's last record is the
         // previous tip, often a run that collected nothing, so the range was one landing and an
         // adapter that picks its tests by changed paths ran none of the failing ones. A red check
         // is asked what changed since its newest pass before the failure, a range that holds the
         // paths that chose the failing tests; with no pass in the window, the whole span.
         //
-        // G629 (a fleet finding, 2026-11-02: after its red, edge-py-fast ran 2,073 units on each
+        // G629 (a fleet finding, 2026-11-02: after its red, a Python check ran 2,073 units on each
         // new tip, in 627-645 s, because the culprit's paths stayed in every tip's range and
         // picked a whole service): a red check whose newest failing run was asked its failed
         // units again and answered each one is asked what changed since that run's landing.
@@ -390,12 +390,12 @@ fn in_turn<'a>(
         })
         .unwrap_or_default();
     // G433 (a fleet finding, 2026-10-28): a check that only ever answers `unknown` stays pending,
-    // so it went first on every tip, and a check in the policy's tail (edge-py-fast, fifth on its
+    // so it went first on every tip, and a check in the policy's tail (a Python check, fifth on its
     // box) ran on no tip for eight hours. The check this box ran longest ago goes first; ties
     // keep the rule above.
     let ran = last_runs(git, (registry, writer, policy), tip, &entries);
-    // G582 (a fleet finding, 2026-10-30: with one runner for its environment and red edge-py-fast
-    // runs of ~30 min, scripts-fast ran on no tip for 49 landings and passed the red window, so a
+    // G582 (a fleet finding, 2026-10-30: with one runner for its environment and red Python check
+    // runs of ~30 min, a scripts check ran on no tip for 49 merges and passed the red window, so a
     // failure there could no longer be ranged): a red check goes first on each new tip, and one
     // piece an environment a pass, so the other checks of its environment starved. A check this
     // box has not answered for half the window goes before a red one, while a run still ranges
@@ -440,7 +440,7 @@ struct Failing {
     answered_rerun: bool,
 }
 
-/// G540 (a fleet finding, 2026-10-29: scripts-fast failed on 3 units, and every later post run
+/// G540 (a fleet finding, 2026-10-29: a scripts check failed on 3 units, and every later post run
 /// asked its adapter only about the files changed since, which no test read, so the red stood):
 /// the units that failed in `red`'s newest failing record of `id`, read from the records the red
 /// judgement counts at its newest failing landing, and whether that record answered the units
@@ -908,7 +908,7 @@ const UNAVAILABLE_FLOOR: std::time::Duration = std::time::Duration::from_mins(10
 const UNAVAILABLE_COST_FACTOR: u64 = 10;
 
 /// How long a check that holds changes waits instead: a red check, or one whose fix waits for its
-/// run (G573, a fleet finding, 2026-10-29: scripts-fast's fix waited for its run, one worker did
+/// run (G573, a fleet finding, 2026-10-29: a scripts check's fix waited for its run, one worker did
 /// not answer it, and ten changes on its paths waited the whole hour for the next try). Each
 /// other post check of its environment still gets the passes in between.
 const HOLDING_UNAVAILABLE_WAIT: std::time::Duration = std::time::Duration::from_mins(5);

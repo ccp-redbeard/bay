@@ -1,5 +1,5 @@
-//! G582 (a fleet finding, 2026-10-30: one runner served the environment of edge-py-fast and
-//! scripts-fast; edge-py-fast was red and each of its runs took ~30 min, so scripts-fast ran on no
+//! G582 (a fleet finding, 2026-10-30: one runner served the environment of a Python check and
+//! a scripts check; the first was red, each of its runs took ~30 min, so the second ran on no
 //! tip for 49 landings and passed the red window, where a failure can no longer be ranged). A
 //! red post check goes first on each new tip (G492), and a pass plans one post check an
 //! environment (#123), so the other checks of its environment never ran. Now a check this box has
