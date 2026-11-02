@@ -389,7 +389,7 @@ pub fn discard(repo: &Repo, id: &str, saved: &str) -> Result<Option<PathBuf>, Gi
     let path = repo.view_path(id);
     let path_text = path.display().to_string();
     let mut kept = None;
-    if path.exists() && holds_unsaved(&path, saved) {
+    if path.exists() && holds_unsaved(repo, &path, saved) {
         let aside = repo
             .views_dir()
             .join(format!("{id}.unsaved-{}", unix_now()));
@@ -412,21 +412,57 @@ pub fn discard(repo: &Repo, id: &str, saved: &str) -> Result<Option<PathBuf>, Gi
 /// its tree, or untracked, ignored ones too (an `.env` is work no draft holds). A file the view
 /// lacks is no work (a view made only in part lacks many), and a view that cannot be read is
 /// taken to hold work.
-fn holds_unsaved(path: &Path, saved: &str) -> bool {
+///
+/// G636 (a fleet finding, 2026-11-02: a full view's first checkout was cut off before git
+/// wrote its index, so every file read as untracked, and `bay start` moved the whole view
+/// aside as unsaved, 44,795 files): a view with no index is judged through an index of bay's
+/// own, read from the view's commit, so only the files that differ from that commit, or that
+/// it does not hold, count as work. The view's own files and index stay as they are.
+fn holds_unsaved(repo: &Repo, path: &Path, saved: &str) -> bool {
     let git = Git::new(path);
+    let Ok(index) = git.run(&["rev-parse", "--git-path", "index"]) else {
+        return true;
+    };
+    let own = (!path.join(&index).exists()).then(|| {
+        repo.common_dir
+            .join("bay")
+            .join(format!("view-{}.index", std::process::id()))
+    });
+    let own_text = own.as_ref().map(|own| own.display().to_string());
+    let envs: Vec<(&str, &str)> = own_text
+        .iter()
+        .map(|own| ("GIT_INDEX_FILE", own.as_str()))
+        .collect();
+    let read = own.as_ref().map_or(Ok(String::new()), |own| {
+        let _ = std::fs::remove_file(own);
+        git.run_with(&["read-tree", "HEAD"], &envs, None)
+    });
+    let holds = read.is_err() || differs(&git, &envs, saved);
+    if let Some(own) = &own {
+        let _ = std::fs::remove_file(own);
+    }
+    holds
+}
+
+/// [`holds_unsaved`] once the view has an index to read, the one `envs` names or its own.
+fn differs(git: &Git, envs: &[(&str, &str)], saved: &str) -> bool {
     let tree = format!("{saved}^{{tree}}");
-    let changed = match git.run_status(&["diff", "--quiet", "--diff-filter=d", &tree]) {
+    let changed = match git.run_status_with(&["diff", "--quiet", "--diff-filter=d", &tree], envs) {
         Ok((0, _, _)) => false,
         Ok(_) | Err(_) => true,
     };
     changed
         || git
-            .run(&[
-                "ls-files",
-                "--others",
-                "--directory",
-                "--no-empty-directory",
-            ])
+            .run_with(
+                &[
+                    "ls-files",
+                    "--others",
+                    "--directory",
+                    "--no-empty-directory",
+                ],
+                envs,
+                None,
+            )
             .map_or(true, |untracked| !untracked.is_empty())
 }
 

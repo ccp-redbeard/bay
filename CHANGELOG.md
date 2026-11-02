@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.27
+
+- A view whose first checkout stopped before git wrote its index is judged against its commit.
+- Only files that differ from that commit, or that it lacks, count as unsaved work.
+- Before, `bay start` moved the whole view aside as unsaved and made it again.
+
 ## 0.6.26
 
 - Under `signing = "approvals"`, a change to only the policy and its check scripts is a repair.
