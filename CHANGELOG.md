@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.24
+
+- A hook polls the remote in a child, `bay live poll`, and waits for it at most 3 s.
+- So a slow remote never makes a product drop a hook's output at its timeout.
+- What a poll brings after the 3 s is told at a later hook; one poll runs at a time.
+- A lockable edit's lock waits for the remote at most 10 s, then is refused `REMOTE_UNREACHABLE`.
+- A wake line over 200 characters is cut at a word, marked `…`, and names where to read it all.
+- A red owner's wake line keeps its fix command whole.
+- A red failing on new units tells the merges on the check's paths since its previous failing run.
+- A red post check whose newest failing run answered its failed units is asked what changed since that run's landing.
+- A change's run that cannot read main's policy leaves it to a live runner and says `bay update`.
+- A change's own run whose push the host refuses for permission leaves the operation to the runners, with no retry.
+- An operation of a landed change is never live: a runner's presence no longer names it as `holding`.
+- This release also carries 0.6.20 to 0.6.23, which were not published on their own.
+
 ## 0.6.23
 
 - A post check's failure that a rerun follows says so in its record, and when the last rerun is due.
