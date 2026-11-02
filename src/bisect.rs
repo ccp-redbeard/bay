@@ -508,7 +508,7 @@ fn last_runs(
     ran
 }
 
-/// G625 (E87, a fleet finding, 2026-11-01: venue11 and venue12 A served one environment, and each
+/// G625 (E87, a fleet finding, 2026-11-01: two runner boxes served one environment, and each
 /// ran every post check on each tip: 62 runs on 46 tips in three hours, no verdict different,
 /// 36 of them after the other box had recorded its answer): the checks of `entries` that another
 /// producer's `records` on `commit`'s tree already answer, as the red judgment counts them (the
