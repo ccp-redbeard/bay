@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.21
+
+- `bay status` waits for its sweep of the remote at most `--deadline` seconds (default 3).
+- Past the deadline, a status answers from the store as the last sweep left it, with a `stale_read` warning.
+- Every status names `fetched_at`, the time of its sweep, and `stale_s`, its age in seconds.
+- A store runs one sweep at a time; a status that finds one running waits for it until its deadline.
+- A sweep past the deadline runs to its end in its own process; the next status reads its result.
+- A sweep's window starts at its end and lasts twice the sweep's time, from 15 s to 60 s.
+- The sweep a status starts writes the coordination cache again; the agent hook judges writes against its trunk.
+- The next runner pass reads an operation blocked `MERGE_OUTCOME_UNKNOWN` again.
+- A candidate that landed is recorded landed; one that did not land is published once.
+- A red never names as culprit a merge that changed the check itself; that merge's post ran the old check.
+- The red says so, and the next `--fixes` change on the check's paths is judged by the new check.
+- A note whose blob the store lacks is unreadable on the batch read of evidence notes too, never "no records".
+- A status lists again the changes live before its sweep, so a change the sweep saw merge shows merged.
+- A status whose sweep moves trunk to a tip with no config refuses with `CONFIG_MISSING` again.
+- A status read lists the change chains by name and reads trunk's log once for the views it checks.
+- It walks the changes' start times from Git's commit graph, so a read from the store does less work.
+- A runner skips a post check on main's tip when another producer's counted record already answers it there.
+- Its next run of that check asks about what changed since that answer.
+
 ## 0.6.20
 
 - `bay status` asks the remote once: one dry-run fetch lists every namespace, and bay writes only the refs that moved.
