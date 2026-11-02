@@ -2,10 +2,10 @@
 //! answer that run, and ten changes on its paths waited a whole hour before the runner tried the
 //! check again). A post check no worker answers waits before its box tries it again (G449); a
 //! check that holds changes, a red one or one whose fix waits for its run, waits five minutes,
-//! and every other check still waits the hour.
+//! and every other check waits ten times what its try cost, at least ten minutes (G633).
 //!
 //! `suite` turns red, then neither post check is answered on the next tip. On the tip after it,
-//! with the short wait over and the hour not, the runner runs the red `suite`, and its pass
+//! with the short wait over and the floor not, the runner runs the red `suite`, and its pass
 //! clears the red; the green `quiet` still waits.
 //!
 //! Guards to mutate, in `src/bisect.rs`: in `tips`, the `red_of(entry).is_some()` given to
@@ -171,7 +171,7 @@ fn a_red_check_no_worker_answered_is_tried_again_sooner_than_a_green_one() {
         Vec::<Value>::new()
     );
 
-    // WHEN workers answer again on the tip after it, and the short wait is over while the hour
+    // WHEN workers answer again on the tip after it, and the short wait is over while the floor
     // is not.
     let back = land(&test_box, (&repo, &remote), "back", &["conf"], "pass");
     let short = [("BAY_TEST_HOLDING_UNAVAILABLE_WAIT_S", "0")];
@@ -184,6 +184,6 @@ fn a_red_check_no_worker_answered_is_tried_again_sooner_than_a_green_one() {
     assert_eq!(red(), json!([]), "its pass clears the red: {ran:?}");
     assert!(
         records(&test_box, &remote, "quiet", &back).is_empty(),
-        "the green check still waits the hour: {ran:?}"
+        "the green check still waits the floor: {ran:?}"
     );
 }

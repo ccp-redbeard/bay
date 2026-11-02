@@ -890,14 +890,22 @@ fn bisect(
     }))
 }
 
-/// Runs `red`'s post check on landing `commit` and records its verdict as this box's post
-/// evidence on the landing's tree, pushed. `Ok(Err(why))` when it cannot run here.
-/// How long a check that no worker answered on this box waits before this box tries it again
-/// (BACKLOG 117, a fleet finding, 2026-10-28: the one post runner waited 383-400 s on each of
+/// How long at most a check that no worker answered on this box waits before this box tries it
+/// again (BACKLOG 117, a fleet finding, 2026-10-28: the one post runner waited 383-400 s on each of
 /// eight worker tickets that never started, and wrote no record, so the same check came first
 /// in every pass and its other post checks were silent for two hours). A record of the check
 /// ends the wait.
 const UNAVAILABLE_WAIT: std::time::Duration = std::time::Duration::from_hours(1);
+
+/// How long at least such a check waits (G633, a fleet finding, 2026-11-02: one try that ended
+/// unanswered after 12 s held a post check for the whole hour). Between the two, it waits
+/// [`UNAVAILABLE_COST_FACTOR`] times what its try cost, so tries no worker answers take at most a
+/// tenth of the box's time. It is longer than [`HOLDING_UNAVAILABLE_WAIT`], the wait `run_at`
+/// checks again, so `tips` alone decides a green check's wait.
+const UNAVAILABLE_FLOOR: std::time::Duration = std::time::Duration::from_mins(10);
+
+/// How many times its try's cost a check no worker answered waits.
+const UNAVAILABLE_COST_FACTOR: u64 = 10;
 
 /// How long a check that holds changes waits instead: a red check, or one whose fix waits for its
 /// run (G573, a fleet finding, 2026-10-29: scripts-fast's fix waited for its run, one worker did
@@ -905,28 +913,40 @@ const UNAVAILABLE_WAIT: std::time::Duration = std::time::Duration::from_hours(1)
 /// other post check of its environment still gets the passes in between.
 const HOLDING_UNAVAILABLE_WAIT: std::time::Duration = std::time::Duration::from_mins(5);
 
-/// [`HOLDING_UNAVAILABLE_WAIT`] when the check `holds` changes, else [`UNAVAILABLE_WAIT`]; a test
-/// build honours `BAY_TEST_HOLDING_UNAVAILABLE_WAIT_S` and `BAY_TEST_UNAVAILABLE_WAIT_S`, a
-/// release build never does.
-fn unavailable_wait(holds: bool) -> std::time::Duration {
-    let (var, wait) = if holds {
-        (
+/// [`HOLDING_UNAVAILABLE_WAIT`] when the check `holds` changes, else [`UNAVAILABLE_COST_FACTOR`]
+/// times `cost_s`, from [`UNAVAILABLE_FLOOR`] to [`UNAVAILABLE_WAIT`]; a test build honours
+/// `BAY_TEST_HOLDING_UNAVAILABLE_WAIT_S` and `BAY_TEST_UNAVAILABLE_FLOOR_S`, a release build never
+/// does.
+fn unavailable_wait(holds: bool, cost_s: u64) -> std::time::Duration {
+    let knob = |var: &str, wait: std::time::Duration| {
+        if option_env!("BAY_RELEASE_VERSION").is_none()
+            && let Some(secs) = std::env::var(var).ok().and_then(|secs| secs.parse().ok())
+        {
+            return std::time::Duration::from_secs(secs);
+        }
+        wait
+    };
+    if holds {
+        return knob(
             "BAY_TEST_HOLDING_UNAVAILABLE_WAIT_S",
             HOLDING_UNAVAILABLE_WAIT,
-        )
-    } else {
-        ("BAY_TEST_UNAVAILABLE_WAIT_S", UNAVAILABLE_WAIT)
-    };
-    if option_env!("BAY_RELEASE_VERSION").is_none()
-        && let Some(secs) = std::env::var(var).ok().and_then(|secs| secs.parse().ok())
-    {
-        return std::time::Duration::from_secs(secs);
+        );
     }
-    wait
+    let floor = knob("BAY_TEST_UNAVAILABLE_FLOOR_S", UNAVAILABLE_FLOOR);
+    std::time::Duration::from_secs(cost_s.saturating_mul(UNAVAILABLE_COST_FACTOR))
+        .max(floor)
+        .min(UNAVAILABLE_WAIT)
 }
 
-/// The file where this box notes when no worker answered each check: `<check>@<environment>`
-/// to the Unix second.
+/// When no worker answered a check on this box, to the Unix second, and what that try cost.
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Unanswered {
+    at: u64,
+    cost_s: u64,
+}
+
+/// The file where this box notes the checks no worker answered: `<check>@<environment>` to its
+/// [`Unanswered`].
 fn unavailable_file(repo: &Repo) -> std::path::PathBuf {
     repo.common_dir.join("bay").join("post-unavailable.json")
 }
@@ -935,16 +955,18 @@ fn unavailable_key(id: &CheckId) -> String {
     format!("{}@{}", id.id, id.environment)
 }
 
-fn unavailable_notes(repo: &Repo) -> std::collections::BTreeMap<String, u64> {
+/// The notes in [`unavailable_file`]; none when it cannot be read, so a check is tried once
+/// more.
+fn unavailable_notes(repo: &Repo) -> std::collections::BTreeMap<String, Unanswered> {
     std::fs::read_to_string(unavailable_file(repo))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
 }
 
-/// Records that no worker answered `id` at `now`, or, with `None`, that it has a record again.
+/// Records that no worker answered `id` (`Some`), or, with `None`, that it has a record again.
 /// One piece at a time reads and writes the file (#123), so no piece drops another's note.
-fn note_unavailable(repo: &Repo, id: &CheckId, now: Option<u64>) {
+fn note_unavailable(repo: &Repo, id: &CheckId, now: Option<Unanswered>) {
     static NOTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _noting = NOTING
         .lock()
@@ -970,13 +992,16 @@ fn note_unavailable(repo: &Repo, id: &CheckId, now: Option<u64>) {
 /// The seconds `id` still waits, when no worker answered it here within [`unavailable_wait`];
 /// shorter when the check `holds` changes.
 fn waits_for_a_worker(repo: &Repo, id: &CheckId, holds: bool) -> Option<u64> {
-    let at = *unavailable_notes(repo).get(&unavailable_key(id))?;
-    let left = at
-        .saturating_add(unavailable_wait(holds).as_secs())
+    let note = *unavailable_notes(repo).get(&unavailable_key(id))?;
+    let left = note
+        .at
+        .saturating_add(unavailable_wait(holds, note.cost_s).as_secs())
         .saturating_sub(crate::live::unix_now());
     (left > 0).then_some(left)
 }
 
+/// Runs `red`'s post check on landing `commit` and records its verdict as this box's post
+/// evidence on the landing's tree, pushed. `Ok(Err(why))` when it cannot run here.
 fn run_at(
     repo: &Repo,
     keys: &Keys,
@@ -1060,6 +1085,7 @@ fn run_at(
         }
         evidence::append(git, &writer.name, record)
     };
+    let started = std::time::Instant::now();
     let ran = check::run_all(
         git,
         &scratch,
@@ -1097,19 +1123,24 @@ fn run_at(
         },
     );
     let _ = check::remove_tree(&scratch);
-    answered(repo, writer, id, ran?)
+    answered(repo, writer, id, (ran?, started.elapsed()))
 }
 
-/// What `ran` answered for `id`: its verdict, its record pushed; or why it gave none. A check
-/// no worker answers is noted, so this box waits before it tries it again (BACKLOG 117).
+/// What `ran` answered for `id` in `took`: its verdict, its record pushed; or why it gave none. A
+/// check no worker answers is noted with what its try cost, so this box waits before it tries it
+/// again (BACKLOG 117, G633).
 fn answered(
     repo: &Repo,
     writer: &Writer,
     id: &CheckId,
-    ran: check::Ran,
+    (ran, took): (check::Ran, std::time::Duration),
 ) -> Result<Result<Answer, String>, String> {
     if let Some((_, reason)) = ran.unavailable {
-        note_unavailable(repo, id, Some(crate::live::unix_now()));
+        let note = Unanswered {
+            at: crate::live::unix_now(),
+            cost_s: took.as_secs(),
+        };
+        note_unavailable(repo, id, Some(note));
         return Ok(Err(format!("no worker answers the check: {reason}")));
     }
     let Some(answer) = Answer::of(&ran.records) else {

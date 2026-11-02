@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.25
+
+- A post check no worker answered waits ten times what its try cost, from ten minutes to the hour.
+- Before, it always waited the hour, so one 12 s try held its check that long.
+- A check that holds changes still waits five minutes.
+
 ## 0.6.24
 
 - A hook polls the remote in a child, `bay live poll`, and waits for it at most 3 s.
