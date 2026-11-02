@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.20
+
+- `bay status` asks the remote once: one dry-run fetch lists every namespace, and bay writes only the refs that moved.
+- A status with nothing moved on the remote writes no ref.
+- A status reads its sections side by side, and reads each chain's record once.
+- A listing's sweep serves the status reads of its store for 15 s.
+- A push from the store ends that window, unless the store holds each ref the push sent.
+- A failed push always ends the window.
+- A status served by that window names the sweep's time as its `fetched_at`.
+- Offline, a status tries the one sweep, then fetches as before.
+
 ## 0.6.19
 
 - `bay update` names the installed and the new version; a pin below the installed bay is never its target.
