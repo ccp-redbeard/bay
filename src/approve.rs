@@ -848,8 +848,9 @@ fn waive_in(
             None,
         ));
     };
-    // N-9: only a check the policy at the candidate's base marks waivable takes a waiver.
-    let marked = match crate::policy::load_at(&repo.git, &found.base) {
+    // N-9: only a check the policy at the candidate's base marks waivable takes a waiver; G635:
+    // as that policy judges the candidate, so every run check of a policy repair's base.
+    let marked = match crate::policy::load_base_of(&repo.git, &found.base, &found.commit) {
         Ok(Some(policy)) => policy
             .checks
             .iter()

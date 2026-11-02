@@ -444,7 +444,12 @@ fn approval_policies(
     let waiver = kind == evidence::KIND_WAIVER;
     let mut judged: Vec<(u64, String, String, Option<Value>)> = Vec::new();
     for at in [base, commit] {
-        let loaded = crate::policy::load_at(git, at);
+        // G635: the base's policy as it judges the candidate; a repair's checks are waivable.
+        let loaded = if at == base {
+            crate::policy::load_base_of(git, at, commit)
+        } else {
+            crate::policy::load_at(git, at)
+        };
         // A candidate's own invalid policy is its land's refusal; the base still judges.
         if at == commit && matches!(loaded, Err(crate::policy::LoadError::Invalid(_))) {
             continue;

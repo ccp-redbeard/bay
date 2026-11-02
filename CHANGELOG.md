@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.26
+
+- Under `signing = "approvals"`, a change to only the policy and its check scripts is a repair.
+- Main's checks still judge it, and an enrolled approver may waive each one on that candidate.
+- Its own new policy still runs every check, and none of those is waivable.
+- A waiver is never a pass: the merge names it in `coverage_gaps` with the real verdict.
+- Before, a fix main's checks could not judge waited with no way through.
+- A check waived on its candidate runs no more.
+- Before, a waived check with no clear answer ran again, and the merge failed.
+
 ## 0.6.25
 
 - A post check no worker answered waits ten times what its try cost, from ten minutes to the hour.

@@ -899,6 +899,23 @@ impl Policy {
         .collect()
     }
 
+    /// G635 (a fleet finding, 2026-11-02: a policy fix that copied a file every TypeScript check
+    /// needed was judged by the policy it fixed too, whose checks could not install without
+    /// that file, so they answered unknown on each of its candidates, and no signature or
+    /// approval check could let it through): this policy with every run check waivable, as it
+    /// judges a candidate that repairs it ([`repairs`]). An enrolled approver may then waive one
+    /// of its checks on that exact candidate, as N-9 waives a check marked `waivable = true`.
+    /// The candidate's own new policy is never so marked: every one of its checks still runs
+    /// and must pass, and the waiver is never a pass (`coverage_gaps`). Digests are the loaded
+    /// policy's, so a waiver names this policy's manifest.
+    #[must_use]
+    pub fn with_repair_waivers(mut self) -> Self {
+        for entry in &mut self.checks {
+            entry.waivable |= !entry.is_approval();
+        }
+        self
+    }
+
     /// N-9: the waiver among `records` that lets check `id` through on candidate `commit`, if
     /// any: the check's entry says `waivable = true` (and is no approval check); the record is
     /// a `waiver` of that check and environment, under this policy's manifest, about exactly
@@ -1352,6 +1369,97 @@ pub fn load_at(git: &Git, commit: &str) -> Result<Option<Policy>, LoadError> {
         (loaded, ran_git)
     })
     .0
+}
+
+/// Whether candidate `commit` changes `.bay/policy.toml` or any adapter path of `base`, the
+/// policy at `trunk`: a check's or an input provider's.
+///
+/// # Errors
+///
+/// A git fault.
+pub fn policy_changed(
+    git: &Git,
+    trunk: &str,
+    commit: &str,
+    base: Option<&Policy>,
+) -> Result<bool, String> {
+    let mut paths = vec![POLICY_PATH.to_owned()];
+    if let Some(base) = base {
+        paths.extend(base.adapter_paths());
+    }
+    let mut args = vec!["diff", "--name-only", "--no-renames", trunk, commit, "--"];
+    args.extend(paths.iter().map(String::as_str));
+    Ok(!git.run(&args).map_err(|error| error.message())?.is_empty())
+}
+
+/// Whether every path candidate `commit` changes from `trunk` is the policy file or an adapter
+/// path (of `base` or of `own`): the only change a repair may make.
+///
+/// # Errors
+///
+/// A git fault.
+pub fn only_policy_paths(
+    git: &Git,
+    trunk: &str,
+    commit: &str,
+    base: Option<&Policy>,
+    own: &Policy,
+) -> Result<bool, String> {
+    let adapters: Vec<String> = base
+        .into_iter()
+        .chain(std::iter::once(own))
+        .flat_map(Policy::adapter_paths)
+        .collect();
+    let changed = git
+        .run(&["diff", "--name-only", "--no-renames", trunk, commit])
+        .map_err(|error| error.message())?;
+    Ok(changed.lines().all(|path| {
+        path == POLICY_PATH
+            || adapters.iter().any(|adapter| {
+                if adapter.ends_with('/') {
+                    path.starts_with(adapter.as_str())
+                } else {
+                    path == adapter
+                }
+            })
+    }))
+}
+
+/// G635: whether candidate `commit` repairs `base`, the policy at `trunk`: `base` says
+/// `signing = "approvals"`, and the candidate changes the policy file or an adapter path, and
+/// nothing else ([`only_policy_paths`]), with a valid policy of its own. Under that signing no
+/// request is signed (N-21), so no registry signature can mark a repair; a person's waiver of
+/// a check `base` runs is how one lands that `base` cannot judge
+/// ([`Policy::with_repair_waivers`]).
+///
+/// # Errors
+///
+/// A git fault.
+pub fn repairs(git: &Git, trunk: &str, commit: &str, base: &Policy) -> Result<bool, String> {
+    if base.signing != Signing::Approvals || !policy_changed(git, trunk, commit, Some(base))? {
+        return Ok(false);
+    }
+    match load_at(git, commit) {
+        Ok(Some(own)) => only_policy_paths(git, trunk, commit, Some(base), &own),
+        Ok(None) | Err(LoadError::Invalid(_)) => Ok(false),
+        Err(LoadError::Git(why)) => Err(why),
+    }
+}
+
+/// The policy at `base` as it judges candidate `commit`: [`load_at`], with every run check
+/// waivable when the candidate repairs it ([`repairs`], G635). What each waiver reads: the
+/// judgment, `bay waiting`, `bay approve --waive` and the record that writes the waiver.
+///
+/// # Errors
+///
+/// As [`load_at`].
+pub fn load_base_of(git: &Git, base: &str, commit: &str) -> Result<Option<Policy>, LoadError> {
+    match load_at(git, base)? {
+        Some(policy) if repairs(git, base, commit, &policy).map_err(LoadError::Git)? => {
+            Ok(Some(policy.with_repair_waivers()))
+        }
+        loaded => Ok(loaded),
+    }
 }
 
 /// [`load_at`] of each of `commits`, in their order. Commits whose policy file and adapter

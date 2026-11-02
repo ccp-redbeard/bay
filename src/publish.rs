@@ -4263,7 +4263,7 @@ fn waivable_policy(ctx: &Ctx, op_id: &str) -> Result<bool, String> {
     else {
         return Ok(false);
     };
-    match policy::load_at(&ctx.repo.git, &attempt.base) {
+    match policy::load_base_of(&ctx.repo.git, &attempt.base, &attempt.commit) {
         Ok(Some(policy)) => Ok(policy.checks.iter().any(|entry| entry.waivable)),
         Ok(None) | Err(policy::LoadError::Invalid(_)) => Ok(false),
         Err(policy::LoadError::Git(why)) => Err(why),
@@ -6121,6 +6121,16 @@ fn check_candidate(
         Err(policy::LoadError::Git(why)) => return refuse(why),
     };
     let base_from = adapters_from.as_deref().unwrap_or(trunk);
+    // G635: under `signing = "approvals"` no request is signed, so no signature marks a repair.
+    // A candidate that changes only the policy and adapter paths is judged by the base's checks
+    // as before, each waivable by an enrolled approver on that exact candidate; its own policy
+    // still runs every check, none waivable.
+    let base_policy = match base_policy {
+        Some(base) if ctx.repair.is_none() && policy::repairs(git, trunk, commit, &base)? => {
+            Some(base.with_repair_waivers())
+        }
+        other => other,
+    };
     // The missing-policy ruling: no policy at the base is unknown criteria, and unknown is
     // never pass. Only a registry-signed repair, judged by its own new policy alone (§ 7), may
     // stand on such a base; a candidate's own policy never judges it otherwise.
@@ -6144,7 +6154,7 @@ fn check_candidate(
             inputs,
         )
     };
-    let changed = policy_changed(git, trunk, commit, base_policy.as_ref())?;
+    let changed = policy::policy_changed(git, trunk, commit, base_policy.as_ref())?;
     if !changed {
         if ctx.repair.is_some() {
             return refuse("a policy repair changes only .bay/policy.toml and adapter paths, and this change does not change them".to_owned());
@@ -6178,7 +6188,7 @@ fn check_candidate(
         return refuse(why);
     }
     if let Some(principal) = &ctx.repair {
-        if !only_policy_paths(git, trunk, commit, base_policy.as_ref(), &own_policy)? {
+        if !policy::only_policy_paths(git, trunk, commit, base_policy.as_ref(), &own_policy)? {
             return refuse(format!(
                 "a policy repair signed by {principal} may touch only .bay/policy.toml and adapter paths"
             ));
@@ -6258,7 +6268,7 @@ fn approval_repair(
     if registry.signs_all() || base.unchecked || ctx.repair.is_some() {
         return Ok(None);
     }
-    if !only_policy_paths(git, trunk, commit, Some(base), own)? {
+    if !policy::only_policy_paths(git, trunk, commit, Some(base), own)? {
         return Ok(None);
     }
     let changed = check::changed_paths(git, trunk, commit)?;
@@ -6325,52 +6335,6 @@ fn policy_invalid(
                 .with_detail(json!({"policy_at": at, "policy": which, "why": why})),
         ),
     )
-}
-
-/// Whether the candidate changes `.bay/policy.toml` or any adapter path of the base policy,
-/// a check's or an input provider's.
-fn policy_changed(
-    git: &Git,
-    trunk: &str,
-    commit: &str,
-    base: Option<&policy::Policy>,
-) -> Result<bool, String> {
-    let mut paths = vec![policy::POLICY_PATH.to_owned()];
-    if let Some(base) = base {
-        paths.extend(base.adapter_paths());
-    }
-    let mut args = vec!["diff", "--name-only", "--no-renames", trunk, commit, "--"];
-    args.extend(paths.iter().map(String::as_str));
-    Ok(!git.run(&args).map_err(|error| error.message())?.is_empty())
-}
-
-/// Whether every path the candidate changes is the policy file or an adapter path (of either
-/// policy): the only change a repair may make.
-fn only_policy_paths(
-    git: &Git,
-    trunk: &str,
-    commit: &str,
-    base: Option<&policy::Policy>,
-    own: &policy::Policy,
-) -> Result<bool, String> {
-    let adapters: Vec<String> = base
-        .into_iter()
-        .chain(std::iter::once(own))
-        .flat_map(policy::Policy::adapter_paths)
-        .collect();
-    let changed = git
-        .run(&["diff", "--name-only", "--no-renames", trunk, commit])
-        .map_err(|error| error.message())?;
-    Ok(changed.lines().all(|path| {
-        path == policy::POLICY_PATH
-            || adapters.iter().any(|adapter| {
-                if adapter.ends_with('/') {
-                    path.starts_with(adapter.as_str())
-                } else {
-                    path == adapter
-                }
-            })
-    }))
 }
 
 /// The change `ctx` lands at `revision`, as a check request names it (`INTERFACES` § 3).
@@ -7404,12 +7368,21 @@ fn finished_checks(
     // reuse off another operation on the same tree is rechecked (G29).
     let mine = format!("/{op_id}.");
     // G163: a record from a producer the check's list leaves out answers nothing here either.
-    let (resumed, others): (Vec<_>, Vec<_>) = policy
-        .answering(evidence::counted(
-            git,
-            evidence::records_for(git, judged.tree)?,
-            ctx.registry.as_ref(),
-        )?)
+    let counted = policy.answering(evidence::counted(
+        git,
+        evidence::records_for(git, judged.tree)?,
+        ctx.registry.as_ref(),
+    )?);
+    // N-9: a check waived on this exact candidate runs no more: the waiver answers it, never as
+    // a pass (`coverage_gaps`). G635: a run again of a check that gave no clear answer wrote a
+    // second record under its first run's id, and the landing failed.
+    let waived: Vec<evidence::CheckId> = policy
+        .manifest
+        .iter()
+        .map(|entry| evidence::CheckId::new(&entry.id, &entry.environment))
+        .filter(|id| policy.waiver(&counted, id, judged.commit).is_some())
+        .collect();
+    let (resumed, others): (Vec<_>, Vec<_>) = counted
         .into_iter()
         .partition(|record| record.id.contains(&mine));
     let digest = &policy.manifest_digest;
@@ -7418,7 +7391,7 @@ fn finished_checks(
     for entry in &policy.manifest {
         let id = evidence::CheckId::new(&entry.id, &entry.environment);
         let subject = policy.commit_keyed(&id).then_some(judged.commit);
-        if answered(&resumed, &id, digest, subject) {
+        if answered(&resumed, &id, digest, subject) || waived.contains(&id) {
             finished.push(id);
             continue;
         }
@@ -8029,7 +8002,14 @@ fn coverage_gaps(ctx: &Ctx, op_id: &str) -> Result<Vec<serde_json::Value>, Strin
     let git = &ctx.repo.git;
     let mut judged: Vec<policy::Policy> = Vec::new();
     for at in [&attempt.base, &attempt.commit] {
-        match policy::load_at(git, at) {
+        // G635: the base's policy as it judged the candidate, so a waived check of a repair is
+        // named with its waiver.
+        let loaded = if at == &attempt.base {
+            policy::load_base_of(git, at, &attempt.commit)
+        } else {
+            policy::load_at(git, at)
+        };
+        match loaded {
             Ok(Some(policy))
                 if !judged.iter().any(|other| {
                     other.manifest_digest == policy.manifest_digest
@@ -8230,7 +8210,7 @@ pub fn waivable_gaps(
     (base, commit, tree): (&str, &str, &str),
     registry: Option<&Registry>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let policy = match policy::load_at(git, base) {
+    let policy = match policy::load_base_of(git, base, commit) {
         Ok(Some(policy)) if policy.checks.iter().any(|entry| entry.waivable) => policy,
         Ok(_) | Err(policy::LoadError::Invalid(_)) => return Ok(Vec::new()),
         Err(policy::LoadError::Git(why)) => return Err(why),

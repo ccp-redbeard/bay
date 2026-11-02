@@ -44,17 +44,28 @@ pub fn trunk_with(tests: &str) -> Trunk {
 /// [`trunk_with`], with `config` as the trunk's `.bay/config.toml` (empty: none).
 #[must_use]
 pub fn trunk_with_config(tests: &str, config: &str) -> Trunk {
-    trunk_enrolled_by(tests, config, |test_box, repo, keys, approver_key| {
-        test_box.enroll_files(
-            repo,
-            keys,
-            &[
-                ("agent", key_line(AGENT, &keys.agent)),
-                ("approver", key_line(APPROVER, approver_key)),
-                ("registry", key_line(REGISTRAR, &keys.registry)),
-            ],
-        );
-    })
+    trunk_enrolled_by(tests, config, enrol_all)
+}
+
+/// [`trunk`] with no approval check in its policy, as a repository that signs only approvals
+/// may ask none (G635): its registry still enrols approver `approver-a`. Its `tests` check
+/// also crashes on a candidate that holds `src/unknown`, so it gives no clear answer there.
+#[must_use]
+pub fn trunk_without_approval_check() -> Trunk {
+    built("", "", ("", "[ -e src/unknown ] && exit 3\n"), enrol_all)
+}
+
+/// The registry of [`trunk_with_config`]: the agent, approver `approver-a` and the registrar.
+fn enrol_all(test_box: &TestBox, repo: &Path, keys: &TestKeys, approver_key: &Path) {
+    test_box.enroll_files(
+        repo,
+        keys,
+        &[
+            ("agent", key_line(AGENT, &keys.agent)),
+            ("approver", key_line(APPROVER, approver_key)),
+            ("registry", key_line(REGISTRAR, &keys.registry)),
+        ],
+    );
 }
 
 /// [`trunk_with_config`], with the registry made by `enrol` (G299: `bay enrol`), given the
@@ -65,6 +76,17 @@ pub fn trunk_enrolled_by(
     config: &str,
     enrol: impl FnOnce(&TestBox, &Path, &TestKeys, &Path),
 ) -> Trunk {
+    built(tests, config, (APPROVAL, ""), enrol)
+}
+
+/// [`trunk_enrolled_by`], with `approval` as the policy's approval checks (empty: none) and
+/// `before` as the first lines of its `tests` adapter.
+fn built(
+    tests: &str,
+    config: &str,
+    (approval, before): (&str, &str),
+    enrol: impl FnOnce(&TestBox, &Path, &TestKeys, &Path),
+) -> Trunk {
     let test_box = TestBox::new();
     let host = test_box.path().join("host.git");
     test_box.host_init(&host);
@@ -72,7 +94,7 @@ pub fn trunk_enrolled_by(
     test_box.add_origin(&repo, &host);
     let failing = passing_result(1).replace("\\\"pass\\\"", "\\\"product_failure\\\"");
     let mut check = check_files(
-        &format!("[ -e src/fail ] && {{ {failing}; exit 0; }}"),
+        &format!("{before}[ -e src/fail ] && {{ {failing}; exit 0; }}"),
         &passing_result(1),
         1,
         60,
@@ -81,7 +103,7 @@ pub fn trunk_enrolled_by(
         if path == ".bay/policy.toml" {
             // The `tests` entry is the policy's last table so far, so these keys are its own.
             text.push_str(tests);
-            text.push_str(APPROVAL);
+            text.push_str(approval);
             text.push_str(APPROVALS_ONLY);
         }
     }
