@@ -8,18 +8,20 @@
 //! landing names the waiver under `coverage_gaps` (`waived_by`, `why`, `record`) with the
 //! check's real verdict, `product_failure`; no record and no `say` calls it a pass. A check
 //! without `waivable = true` takes no waiver. A waiver signed by a key the registry's approver
-//! file does not enrol never counts. A waiver names one candidate and never carries: one about
-//! an earlier candidate does not answer a new one, even on the same tree. A target never
+//! file does not enrol never counts. A waiver names one candidate: one about an earlier
+//! candidate does not answer a new one on the same tree (G638 carries it only to a rebuild of
+//! the same patch on another tree, where the check fails the same way). A target never
 //! counts a waiver: the waived trunk commit is not promotable to a target requiring the check.
 //!
 //! Guards to mutate (each makes a case here fail):
 //! - `src/publish.rs` `persist_attempt`: drop the N-9 push of a refused check's evidence
 //!   (`bay waiting` on the approver's box reads `unknown`: the first case).
 //! - `src/policy.rs` `Policy::gaps`: drop the line
-//!   `.filter(|(id, _)| self.waiver(records, id, commit).is_none())` (the waived change stays
-//!   `CHECK_FAILED`: the first case).
-//! - `src/policy.rs` `Policy::waiver`: drop `&& record.subject.commit == commit` (the waiver of
-//!   the earlier candidate lands the new one: the fourth case).
+//!   `.filter(|(id, _)| self.waiver(records, carried, id, commit).is_none())` (the waived
+//!   change stays `CHECK_FAILED`: the first case).
+//! - `src/policy.rs` `Policy::waiver`: drop `&& record.subject.commit == commit` from the
+//!   search of `records` (the waiver of the earlier candidate lands the new one: the fourth
+//!   case).
 //! - `src/evidence.rs` `signed_kind`: `registry.signs_all() || approver_kind(kind)` to
 //!   `registry.signs_all() || kind == KIND_APPROVAL` (under `signing = "approvals"` the
 //!   agent-signed waiver is taken unsigned, pushed and counted: the third case).

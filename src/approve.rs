@@ -720,6 +720,8 @@ fn waivable(
             attempt.tree.as_str(),
         ),
         registry,
+        // G638: the candidates of the change as this read of its record names them.
+        &crate::throughput::candidates_of(record),
     )?;
     Ok(Some(Waivable {
         record: record.clone(),

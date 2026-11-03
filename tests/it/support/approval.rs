@@ -47,6 +47,13 @@ pub fn trunk_with_config(tests: &str, config: &str) -> Trunk {
     trunk_enrolled_by(tests, config, enrol_all)
 }
 
+/// [`trunk_with`], its `tests` script running `before` first, so a test may answer for more
+/// than `src/fail` (G638).
+#[must_use]
+pub fn trunk_before(tests: &str, before: &str) -> Trunk {
+    built(tests, "", (APPROVAL, before), enrol_all)
+}
+
 /// [`trunk`] with no approval check in its policy, as a repository that signs only approvals
 /// may ask none (G635): its registry still enrols approver `approver-a`. Its `tests` check
 /// also crashes on a candidate that holds `src/unknown`, so it gives no clear answer there.

@@ -874,12 +874,14 @@ impl Policy {
 
     /// The checks of `required` that `records` do not pass for `commit` (G30), with their
     /// combined verdicts, less each `flaky` one whose entry says `allow_flaky`, and less each
-    /// waivable one that a valid waiver answers on `commit` (N-9, [`Policy::waiver`]). The
-    /// executor and the host hook judge a landing by this one rule.
+    /// waivable one that a valid waiver answers on `commit` (N-9, [`Policy::waiver`]), or that
+    /// a waiver of an earlier candidate among `carried` answers (G638). The executor and the
+    /// host hook judge a landing by this one rule.
     #[must_use]
     pub fn gaps(
         &self,
         records: &[crate::evidence::EvidenceRecord],
+        carried: &[crate::evidence::EvidenceRecord],
         required: &[ManifestEntry],
         commit: &str,
     ) -> Vec<(crate::evidence::CheckId, crate::evidence::Combined)> {
@@ -895,7 +897,7 @@ impl Policy {
             *combined != crate::evidence::Combined::Flaky || !self.allows_flaky(id)
         })
         // N-9: a waived check is no gap here; the landing names it under `coverage_gaps`.
-        .filter(|(id, _)| self.waiver(records, id, commit).is_none())
+        .filter(|(id, _)| self.waiver(records, carried, id, commit).is_none())
         .collect()
     }
 
@@ -919,13 +921,20 @@ impl Policy {
     /// N-9: the waiver among `records` that lets check `id` through on candidate `commit`, if
     /// any: the check's entry says `waivable = true` (and is no approval check); the record is
     /// a `waiver` of that check and environment, under this policy's manifest, about exactly
-    /// `commit` (never another candidate, even one with the same tree: a waiver never carries),
-    /// with a non-empty `why`. `records` are counted records ([`crate::evidence::counted`]), so
-    /// only an enrolled approver's signed waiver is among them, and none without a registry.
+    /// `commit` (never another candidate, even one with the same tree), with a non-empty `why`.
+    /// `records` are counted records ([`crate::evidence::counted`]), so only an enrolled
+    /// approver's signed waiver is among them, and none without a registry.
+    ///
+    /// G638: else the waiver among `carried` that holds every rule but the last commit: each is
+    /// a waiver of an earlier candidate of the change, about that candidate, that
+    /// [`crate::throughput::carried_waivers`] found to carry onto `commit` (the same patch
+    /// rebuilt on a newer main, failing as it failed). N-9 named one candidate because an
+    /// approver weighs what they see; a rebuild that shows them nothing new keeps their word.
     #[must_use]
     pub fn waiver<'r>(
         &self,
         records: &'r [crate::evidence::EvidenceRecord],
+        carried: &'r [crate::evidence::EvidenceRecord],
         id: &crate::evidence::CheckId,
         commit: &str,
     ) -> Option<&'r crate::evidence::EvidenceRecord> {
@@ -935,16 +944,19 @@ impl Policy {
         {
             return None;
         }
-        records.iter().find(|record| {
+        let holds = |record: &crate::evidence::EvidenceRecord| {
             record.kind == crate::evidence::KIND_WAIVER
                 && record.check == *id
                 && record.manifest_digest == self.manifest_digest
-                && record.subject.commit == commit
                 && record
                     .why
                     .as_deref()
                     .is_some_and(|why| !why.trim().is_empty())
-        })
+        };
+        records
+            .iter()
+            .find(|record| holds(record) && record.subject.commit == commit)
+            .or_else(|| carried.iter().find(|record| holds(record)))
     }
 
     /// Whether check `id` is keyed by subject commit ([`CheckEntry::commit_keyed`]).

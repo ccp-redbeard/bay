@@ -1006,7 +1006,8 @@ impl Judge<'_> {
     /// the checks its diff against its parent requires. With `base`, a batch tip's, it is judged
     /// at the batch's base instead, over the batch's whole diff (`crate::throughput`). G292: an
     /// approval of one of the change's `earlier` candidates that still holds answers here too,
-    /// as the executor judged it (`crate::throughput::carried_approvals`).
+    /// as the executor judged it (`crate::throughput::carried_approvals`), and so does a waiver
+    /// that carries (G638, `crate::throughput::carried_waivers`).
     fn evidence_passes(
         &self,
         commit: &str,
@@ -1039,12 +1040,22 @@ impl Judge<'_> {
             evidence::records_for(self.git, &tree)?,
             Some(registry),
         )?);
-        // G292: an approval holds while the files it covers are unchanged.
+        // G292: an approval holds while the files it covers are unchanged. G638: a waiver of
+        // an earlier candidate carries onto its rebuild that fails as it failed.
+        let mut waivers = Vec::new();
         if !earlier.is_empty() {
             let base_tree = self
                 .git
                 .run(&["rev-parse", &format!("{parent}^{{tree}}")])
                 .map_err(|error| message(&error))?;
+            waivers = crate::throughput::carried_waivers(
+                self.git,
+                &policy,
+                Some(registry),
+                (commit, tree.as_str()),
+                &records,
+                earlier,
+            )?;
             let carried = crate::throughput::carried_approvals(
                 self.git,
                 &policy,
@@ -1059,7 +1070,7 @@ impl Judge<'_> {
         let changed = crate::check::changed_paths(self.git, &parent, commit)?;
         let (required, _) = policy.required(&changed);
         // The executor's rule: a flaky check whose entry says `allow_flaky` is no gap.
-        let gaps = policy.gaps(&records, &required, commit);
+        let gaps = policy.gaps(&records, &waivers, &required, commit);
         if gaps.is_empty() {
             Ok(())
         } else {

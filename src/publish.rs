@@ -4188,7 +4188,10 @@ fn retry_blocked(
     // G245: the approval it waits on is written on another machine and reaches this one only
     // through the remote, so the retry reads the remote's records before it judges the change.
     // N-9: so is a waiver.
-    if (reason == Some(Reason::ApprovalPending) || waivable) && ctx.online {
+    // G637: so are the records a failed candidate's block is judged by ([`fails_as_before`]).
+    if (reason == Some(Reason::ApprovalPending) || reason == Some(Reason::CheckFailed) || waivable)
+        && ctx.online
+    {
         ctx.repo.fetch_evidence(&ctx.keys);
     }
     let now = condition(
@@ -4206,6 +4209,20 @@ fn retry_blocked(
                 .with_op(op_id)
                 .with_detail(
                     json!({"unchanged": true, "condition": now, "note": crate::lane::NOTE}),
+                ),
+        ));
+    }
+    // G637: a change that failed the same way on two mains is not checked on a third.
+    if reason == Some(Reason::CheckFailed)
+        && then.as_deref() != Some(now.as_str())
+        && let Some(units) = fails_as_before(ctx, op_id, revision, then.as_deref())?
+    {
+        return Ok(Some(
+            BayResult::blocked(Reason::CheckFailed)
+                .with_change(ctx.id.clone())
+                .with_op(op_id)
+                .with_detail(
+                    json!({"unchanged": true, "fails_as_before": units, "condition": now}),
                 ),
         ));
     }
@@ -4237,6 +4254,103 @@ fn retry_blocked(
         ctx.approved = Some(op_id.to_owned());
     }
     Ok(None)
+}
+
+/// G637 (a fleet finding, 2026-11-02: two changes whose own task cards failed a records check
+/// were checked again on each new main, and failed the same way each time): whether the block
+/// of `op_id` stands although trunk moved. It stands when its last two candidates, each its own
+/// on a different main, failed the same units for the same reasons, each failing unit names a
+/// file the change changes, and nothing but trunk changed since the block (its condition at the
+/// last candidate's main is `then`). A new revision is a new operation and a waiver is new
+/// evidence, so either one still re-arms it. A failing unit that names no file of the change
+/// may be one a newer main fixes, so it keeps the re-arm. The failing units, when it stands.
+fn fails_as_before(
+    ctx: &Ctx,
+    op_id: &str,
+    revision: &str,
+    then: Option<&str>,
+) -> Result<Option<Vec<serde_json::Value>>, String> {
+    let [.., before, last] = ctx.op(op_id).attempts.as_slice() else {
+        return Ok(None);
+    };
+    if before.base == last.base
+        || [before, last]
+            .iter()
+            .any(|attempt| attempt.batch.is_some() || attempt.verdict != "product_failure")
+    {
+        return Ok(None);
+    }
+    let git = &ctx.repo.git;
+    let at_block = condition(
+        git,
+        revision,
+        &last.base,
+        Some(&last.tree),
+        &ctx.record.observed_versions,
+    )?;
+    if then != Some(at_block.as_str()) {
+        return Ok(None);
+    }
+    let Some(failed) = failing_units(git, last)? else {
+        return Ok(None);
+    };
+    if failing_units(git, before)?.as_ref() != Some(&failed) {
+        return Ok(None);
+    }
+    let changed = git
+        .run(&[
+            "diff",
+            "--name-only",
+            "--no-renames",
+            &last.base,
+            &last.commit,
+        ])
+        .map_err(|error| error.message())?;
+    let changed: Vec<&str> = changed.lines().filter(|path| !path.is_empty()).collect();
+    let own = failed.iter().all(|(_, unit, reason)| {
+        changed.iter().any(|path| {
+            unit.contains(path)
+                || reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains(path))
+        })
+    });
+    Ok(own.then(|| {
+        failed
+            .into_iter()
+            .map(|(check, unit, reason)| json!({"check": check, "unit": unit, "reason": reason}))
+            .collect()
+    }))
+}
+
+/// [`failing_units`]: a failed unit, as its check, id and reason.
+type FailingUnit = (String, String, Option<String>);
+
+/// [`fails_as_before`]: each unit the check records about the candidate of `attempt` failed, as
+/// its check, id and reason, sorted, once each. `None` when no record failed, or one failed with
+/// no failing unit named, so what failed is not known.
+fn failing_units(git: &Git, attempt: &Attempt) -> Result<Option<Vec<FailingUnit>>, String> {
+    let mut failed = Vec::new();
+    for record in evidence::records_for(git, &attempt.tree)? {
+        if record.kind != evidence::KIND_CHECK
+            || record.subject.commit != attempt.commit
+            || record.verdict != evidence::Verdict::ProductFailure
+        {
+            continue;
+        }
+        let before = failed.len();
+        for unit in record.units {
+            if unit.verdict == evidence::Verdict::ProductFailure {
+                failed.push((record.check.id.clone(), unit.id, unit.reason));
+            }
+        }
+        if failed.len() == before {
+            return Ok(None);
+        }
+    }
+    failed.sort();
+    failed.dedup();
+    Ok((!failed.is_empty()).then_some(failed))
 }
 
 /// N-9: whether `op_id`, blocked for `reason`, may be answered by a waiver: the reason is a
@@ -6350,34 +6464,64 @@ fn change_facts(ctx: &Ctx, revision: &str) -> check::ChangeFacts {
 
 /// The counted records on `tree`, with the approvals of earlier candidates of this change that
 /// still hold (G292: an approval holds while the files it covers are unchanged; it answers as
-/// its approver signed it, and nothing new is written). A batch's tip lands several changes,
-/// so no one change's approvals carry onto it (`one_change` false).
+/// its approver signed it, and nothing new is written), and the waivers of earlier candidates
+/// that carry onto `commit` (G638). A batch's tip lands several changes, so no one change's
+/// approvals or waivers carry onto it (`one_change` false).
 fn counted_and_carried(
     ctx: &Ctx,
     policy: &policy::Policy,
-    (tree, base_tree): (&str, &str),
+    (commit, tree, base_tree): (&str, &str, &str),
     one_change: bool,
 ) -> Result<(Vec<evidence::EvidenceRecord>, throughput::CarriedApprovals), String> {
     let git = &ctx.repo.git;
+    if one_change {
+        fetch_for_carry(ctx, policy, tree);
+    }
     let mut all = evidence::counted(
         git,
         evidence::records_for(git, tree)?,
         ctx.registry.as_ref(),
     )?;
     let carried = if one_change {
-        throughput::carried_approvals(
+        let earlier = throughput::candidates_of(&ctx.record);
+        let mut carried = throughput::carried_approvals(
             git,
             policy,
             ctx.registry.as_ref(),
             (tree, base_tree),
             &all,
-            &throughput::candidates_of(&ctx.record),
-        )?
+            &earlier,
+        )?;
+        carried.waivers = throughput::carried_waivers(
+            git,
+            policy,
+            ctx.registry.as_ref(),
+            (commit, tree),
+            &all,
+            &earlier,
+        )?;
+        carried
     } else {
         throughput::CarriedApprovals::default()
     };
     all.extend(carried.records.iter().cloned());
     Ok((all, carried))
+}
+
+/// G638: a waiver of an earlier candidate is written on the approver's machine and reaches this
+/// one only through the remote. A new revision's first merge passes no retry that fetches it
+/// (`retry_blocked`), so the carry reads the remote's records first: once in this process (a
+/// runner's pass fetched them at its start), and only for a change with a candidate on another
+/// tree under a policy with a waivable check.
+fn fetch_for_carry(ctx: &Ctx, policy: &policy::Policy, tree: &str) {
+    if ctx.online
+        && policy.checks.iter().any(|entry| entry.waivable)
+        && throughput::candidates_of(&ctx.record)
+            .iter()
+            .any(|candidate| candidate.tree != tree)
+    {
+        ctx.repo.fetch_evidence_once(&ctx.keys);
+    }
 }
 
 /// Runs `policy`'s checks on the candidate with the adapter materialized from `adapter_from`,
@@ -6446,44 +6590,77 @@ fn run_policy(
         evidence::append(git, &producer, record)
     };
     ctx.step.set("check");
+    let baseline = baseline_of(ctx, policy, trunk, &base_tree)?;
+    let mut run = |finished: Vec<evidence::CheckId>| {
+        check::run_all(
+            git,
+            &scratch,
+            policy,
+            &Candidate {
+                commit,
+                tree,
+                base: adapter_from,
+                base_tree: &base_tree,
+                onto: trunk,
+                change,
+                changed_paths: &changed,
+                id: candidate_id,
+                policy_provenance,
+                inputs,
+                turn: Some(if ctx.ahead_of_turn { "ahead" } else { "head" }),
+                rerun: &[],
+                retry: 0,
+            },
+            &producer,
+            &check::Limits {
+                budget: ctx.repo.config.execution_budget(),
+                finished,
+                heartbeat: Some(ctx.repo.config.heartbeat()),
+                hidden: hidden_paths(ctx),
+                sandbox: check::Sandbox::here().reading(git),
+                baseline: baseline.clone(),
+                parallel: ctx.repo.config.parallel_checks(),
+            },
+            &mut check::Hooks {
+                keep: &mut keep,
+                beat: &mut || heartbeat(ctx, op_id),
+                seen: None,
+            },
+        )
+    };
     let check::Ran {
-        records,
-        unavailable: outage,
-    } = check::run_all(
-        git,
-        &scratch,
-        policy,
-        &Candidate {
-            commit,
-            tree,
-            base: adapter_from,
-            base_tree: &base_tree,
-            onto: trunk,
-            change,
-            changed_paths: &changed,
-            id: candidate_id,
-            policy_provenance,
-            inputs,
-            turn: Some(if ctx.ahead_of_turn { "ahead" } else { "head" }),
-            rerun: &[],
-            retry: 0,
-        },
-        &producer,
-        &check::Limits {
-            budget: ctx.repo.config.execution_budget(),
-            finished,
-            heartbeat: Some(ctx.repo.config.heartbeat()),
-            hidden: hidden_paths(ctx),
-            sandbox: check::Sandbox::here().reading(git),
-            baseline: baseline_of(ctx, policy, trunk, &base_tree)?,
-            parallel: ctx.repo.config.parallel_checks(),
-        },
-        &mut check::Hooks {
-            keep: &mut keep,
-            beat: &mut || heartbeat(ctx, op_id),
-            seen: None,
-        },
-    )?;
+        mut records,
+        unavailable: mut outage,
+    } = run(finished.clone())?;
+    // G638: a failure a carried waiver answers ended the run before the checks after it; they
+    // run now, as they would after a waiver of this exact candidate (`finished_checks`).
+    let failed: Vec<evidence::CheckId> = check::failed(&records).into_iter().cloned().collect();
+    if outage.is_none() && change.is_some() && !failed.is_empty() {
+        fetch_for_carry(ctx, policy, tree);
+        let own = evidence::counted(
+            git,
+            evidence::records_for(git, tree)?,
+            ctx.registry.as_ref(),
+        )?;
+        let waived = throughput::carried_waivers(
+            git,
+            policy,
+            ctx.registry.as_ref(),
+            (commit, tree),
+            &own,
+            &throughput::candidates_of(&ctx.record),
+        )?;
+        if failed
+            .iter()
+            .all(|id| waived.iter().any(|waiver| waiver.check == *id))
+        {
+            let mut done = finished;
+            done.extend(records.iter().map(|record| record.check.clone()));
+            let again = run(done)?;
+            records.extend(again.records);
+            outage = again.unavailable;
+        }
+    }
     let _ = std::fs::remove_dir_all(&scratch);
     // The adapter reached no worker for a check: nothing was observed, so it is no verdict.
     if let Some((environment, reason)) = outage {
@@ -6492,7 +6669,8 @@ fn run_policy(
             Some(unavailable(ctx, op_id, &[environment], Some(&reason))),
         ));
     }
-    let (all, carried) = counted_and_carried(ctx, policy, (tree, &base_tree), change.is_some())?;
+    let (all, carried) =
+        counted_and_carried(ctx, policy, (commit, tree, &base_tree), change.is_some())?;
     // What to repair: this run's records and the ones reused in place of a run (§ 8).
     let named: Vec<&evidence::EvidenceRecord> = records.iter().chain(&reused).collect();
     Ok(judge_seen(
@@ -6570,8 +6748,13 @@ fn judge_seen(
 ) -> (&'static str, Option<BayResult>) {
     let (required, _) = policy.required(seen.changed);
     let registry = ctx.registry.as_ref();
-    let Some((code, word, why)) = verdict(policy, &required, seen.all, seen.named, seen.commit)
-    else {
+    let Some((code, word, why)) = verdict(
+        policy,
+        &required,
+        (seen.all, &seen.carried.waivers),
+        seen.named,
+        seen.commit,
+    ) else {
         return ("pass", None);
     };
     let mut detail = json!({
@@ -7019,11 +7202,12 @@ fn judging_policies(git: &Git, revision: &str, trunk: &str) -> Option<Vec<policy
 /// The verdict of `policy` over every counted record on the tree (`all`): `None` for a pass,
 /// else its refusal code and word, and what `named` say about each gap. `required` is the part
 /// of its manifest the candidate's diff requires (G146). Without a registry `all` holds no
-/// approval: [`evidence::counted`] counts none (G245).
+/// approval: [`evidence::counted`] counts none (G245). `carried` are the waivers of earlier
+/// candidates that carry onto `commit` (G638).
 fn verdict(
     policy: &policy::Policy,
     required: &[policy::ManifestEntry],
-    all: &[evidence::EvidenceRecord],
+    (all, carried): (&[evidence::EvidenceRecord], &[evidence::EvidenceRecord]),
     named: &[&evidence::EvidenceRecord],
     commit: &str,
 ) -> Option<(Reason, &'static str, Vec<serde_json::Value>)> {
@@ -7038,7 +7222,7 @@ fn verdict(
     // G30: coverage is judged against the frozen manifest, never against counts.
     // A flaky check whose entry says `allow_flaky` is no gap: the landing names it instead.
     let gaps: Vec<(evidence::CheckId, Combined)> = policy
-        .gaps(&listed, required, commit)
+        .gaps(&listed, carried, required, commit)
         .into_iter()
         // G245: approvers who disagree on one tree are a rejection, never a flaky check.
         .map(|(id, combined)| match combined {
@@ -7380,7 +7564,7 @@ fn finished_checks(
         .manifest
         .iter()
         .map(|entry| evidence::CheckId::new(&entry.id, &entry.environment))
-        .filter(|id| policy.waiver(&counted, id, judged.commit).is_some())
+        .filter(|id| policy.waiver(&counted, &[], id, judged.commit).is_some())
         .collect();
     let (resumed, others): (Vec<_>, Vec<_>) = counted
         .into_iter()
@@ -8000,28 +8184,7 @@ fn coverage_gaps(ctx: &Ctx, op_id: &str) -> Result<Vec<serde_json::Value>, Strin
         return Ok(Vec::new());
     };
     let git = &ctx.repo.git;
-    let mut judged: Vec<policy::Policy> = Vec::new();
-    for at in [&attempt.base, &attempt.commit] {
-        // G635: the base's policy as it judged the candidate, so a waived check of a repair is
-        // named with its waiver.
-        let loaded = if at == &attempt.base {
-            policy::load_base_of(git, at, &attempt.commit)
-        } else {
-            policy::load_at(git, at)
-        };
-        match loaded {
-            Ok(Some(policy))
-                if !judged.iter().any(|other| {
-                    other.manifest_digest == policy.manifest_digest
-                        && other.quarantined == policy.quarantined
-                }) =>
-            {
-                judged.push(policy);
-            }
-            Ok(_) | Err(policy::LoadError::Invalid(_)) => {}
-            Err(policy::LoadError::Git(why)) => return Err(why),
-        }
-    }
+    let judged = attempt_policies(git, attempt)?;
     if judged.is_empty() {
         return Ok(Vec::new());
     }
@@ -8078,12 +8241,25 @@ fn coverage_gaps(ctx: &Ctx, op_id: &str) -> Result<Vec<serde_json::Value>, Strin
     // N-9: a waivable check that landed on a person's waiver is named with the waiver and its
     // real verdict, never as a pass.
     let changed = check::changed_paths(git, &attempt.base, &attempt.commit)?;
-    for gap in judged
-        .iter()
-        .flat_map(|policy| waiver_gaps(policy, &records, &changed, &attempt.commit))
-    {
-        if !gaps.contains(&gap) {
-            gaps.push(gap);
+    let earlier = throughput::candidates_of(&ctx.record);
+    for policy in &judged {
+        // G638: a waiver of an earlier candidate that carried onto this one is named with it.
+        let carried = if attempt.batch.is_none() {
+            throughput::carried_waivers(
+                git,
+                policy,
+                ctx.registry.as_ref(),
+                (&attempt.commit, &attempt.tree),
+                &records,
+                &earlier,
+            )?
+        } else {
+            Vec::new()
+        };
+        for gap in waiver_gaps(policy, (&records, &carried), &changed, &attempt.commit) {
+            if !gaps.contains(&gap) {
+                gaps.push(gap);
+            }
         }
     }
     // Ruling 8c: a quarantined check that no judging policy required was never tested.
@@ -8104,6 +8280,34 @@ fn coverage_gaps(ctx: &Ctx, op_id: &str) -> Result<Vec<serde_json::Value>, Strin
         }
     }
     Ok(gaps)
+}
+
+/// The valid policies that judged the candidate of `attempt`, each once ([`coverage_gaps`]):
+/// the base's, as it judged the candidate, and the candidate's own when it differs.
+fn attempt_policies(git: &Git, attempt: &Attempt) -> Result<Vec<policy::Policy>, String> {
+    let mut judged: Vec<policy::Policy> = Vec::new();
+    for at in [&attempt.base, &attempt.commit] {
+        // G635: the base's policy as it judged the candidate, so a waived check of a repair is
+        // named with its waiver.
+        let loaded = if at == &attempt.base {
+            policy::load_base_of(git, at, &attempt.commit)
+        } else {
+            policy::load_at(git, at)
+        };
+        match loaded {
+            Ok(Some(policy))
+                if !judged.iter().any(|other| {
+                    other.manifest_digest == policy.manifest_digest
+                        && other.quarantined == policy.quarantined
+                }) =>
+            {
+                judged.push(policy);
+            }
+            Ok(_) | Err(policy::LoadError::Invalid(_)) => {}
+            Err(policy::LoadError::Git(why)) => return Err(why),
+        }
+    }
+    Ok(judged)
 }
 
 /// N-3: the required checks of `policy` with `baseline = "base"` whose passing counted
@@ -8164,10 +8368,11 @@ fn baseline_gaps(
 /// N-9: the checks `policy` requires of a candidate whose diff changes `changed` that its
 /// counted `records` do not pass for `commit` and that a valid waiver answers
 /// ([`policy::Policy::waiver`]): each with its real verdict and the waiver, `waived_by` (the
-/// approver), `why` and `record` (the waiver's id). A waiver is never a pass.
+/// approver), `why` and `record` (the waiver's id). A waiver is never a pass. G638: a waiver
+/// among `carried`, of an earlier candidate, also names that candidate (`carried_from`).
 fn waiver_gaps(
     policy: &policy::Policy,
-    records: &[evidence::EvidenceRecord],
+    (records, carried): (&[evidence::EvidenceRecord], &[evidence::EvidenceRecord]),
     changed: &[String],
     commit: &str,
 ) -> Vec<serde_json::Value> {
@@ -8184,15 +8389,19 @@ fn waiver_gaps(
                 Combined::Flaky => "flaky",
                 Combined::Unknown => "unknown",
             };
-            let waiver = policy.waiver(&listed, &id, commit)?;
-            Some(json!({
+            let waiver = policy.waiver(&listed, carried, &id, commit)?;
+            let mut gap = json!({
                 "check": entry.id,
                 "environment": entry.environment,
                 "verdict": verdict,
                 "waived_by": waiver.producer.name,
                 "why": waiver.why,
                 "record": waiver.id,
-            }))
+            });
+            if waiver.subject.commit != commit {
+                gap["carried_from"] = json!(waiver.subject.commit);
+            }
+            Some(gap)
         })
         .collect()
 }
@@ -8201,6 +8410,7 @@ fn waiver_gaps(
 /// that its counted records do not pass and no valid waiver answers yet, judged as its land
 /// judges them: each `{"check", "environment", "verdict"}`, the verdict its records combine
 /// to. What `bay waiting` lists and `bay approve --waive` answers. None without a valid policy.
+/// `earlier` are the candidates the change's operations built, whose waivers may carry (G638).
 ///
 /// # Errors
 ///
@@ -8209,6 +8419,7 @@ pub fn waivable_gaps(
     git: &Git,
     (base, commit, tree): (&str, &str, &str),
     registry: Option<&Registry>,
+    earlier: &[throughput::Earlier],
 ) -> Result<Vec<serde_json::Value>, String> {
     let policy = match policy::load_base_of(git, base, commit) {
         Ok(Some(policy)) if policy.checks.iter().any(|entry| entry.waivable) => policy,
@@ -8222,8 +8433,11 @@ pub fn waivable_gaps(
         evidence::records_for(git, tree)?,
         registry,
     )?);
+    // G638: a check a waiver of an earlier candidate already answers waits for no new one.
+    let carried =
+        throughput::carried_waivers(git, &policy, registry, (commit, tree), &records, earlier)?;
     Ok(policy
-        .gaps(&records, &required, commit)
+        .gaps(&records, &carried, &required, commit)
         .into_iter()
         .filter(|(id, _)| policy.check(id).is_some_and(|entry| entry.waivable))
         .map(|(id, combined)| {

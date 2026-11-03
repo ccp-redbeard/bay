@@ -417,6 +417,7 @@ pub struct Limits {
 /// candidate was merged onto (its tree is the candidate's `base_tree`), and the records on that
 /// tree that count and answer the policy's checks (signed under the registry when there is one,
 /// from a listed producer), read before the run.
+#[derive(Clone)]
 pub struct Baseline {
     pub commit: String,
     pub records: Vec<EvidenceRecord>,
@@ -1311,12 +1312,24 @@ fn run_parallel(
 /// Whether a check of `records` ended in a failure: its last record (its last run) is a
 /// `product_failure`. A failure a later rerun passed is flaky, not a failure here.
 fn ended_by_failure(records: &[EvidenceRecord]) -> bool {
-    records.iter().enumerate().any(|(at, record)| {
-        record.verdict == Verdict::ProductFailure
-            && !records[at + 1..]
-                .iter()
-                .any(|later| later.check == record.check)
-    })
+    !failed(records).is_empty()
+}
+
+/// The checks of `records` whose last record (their last run) is a `product_failure`: what
+/// ended a run ([`ended_by_failure`]).
+#[must_use]
+pub fn failed(records: &[EvidenceRecord]) -> Vec<&CheckId> {
+    records
+        .iter()
+        .enumerate()
+        .filter(|(at, record)| {
+            record.verdict == Verdict::ProductFailure
+                && !records[at + 1..]
+                    .iter()
+                    .any(|later| later.check == record.check)
+        })
+        .map(|(_, record)| &record.check)
+        .collect()
 }
 
 /// Shows and keeps what the check `entry`, the `index`th, ran on a thread, in order, and

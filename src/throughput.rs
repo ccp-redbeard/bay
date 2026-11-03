@@ -759,6 +759,10 @@ pub struct CarriedApprovals {
     /// `{"check", "environment", "record", "commit", "paths"}`, `paths` the gated paths whose
     /// content differs in the candidate's tree or in its base's.
     pub set_aside: Vec<Value>,
+    /// G638: the approver-signed waivers of earlier candidates that answer here
+    /// ([`carried_waivers`]), each about the candidate it named. Never in `records`: a waiver
+    /// answers only [`crate::policy::Policy::waiver`], and never as a pass.
+    pub waivers: Vec<EvidenceRecord>,
 }
 
 impl CarriedApprovals {
@@ -880,6 +884,129 @@ pub fn carried_approvals(
         }
     }
     Ok(out)
+}
+
+/// G638 (a fleet finding, 2026-11-03: a policy repair waited for its approver's waiver of a
+/// check that gave no clear answer, while main moved on; each new main rebuilt it into a
+/// candidate the waiver did not name, so no waiver could ever land it): a waiver carries onto
+/// a candidate the change rebuilt on a newer main when it would show the approver nothing new.
+/// For each waivable check of `policy` that `own`, the counted records on the candidate's
+/// `tree`, neither pass nor waive for `commit`: the counted waiver of that check about an
+/// earlier candidate of the same change (`earlier`, on another tree) whose patch against its
+/// parent is this one's (`git patch-id --stable`), under the same manifest, when the check's
+/// records about this candidate show the same outcome as its records about the waived one
+/// ([`outcome`]). So the check runs here first: one with no record here carries nothing, nor
+/// one that fails in a way the approver did not see. On one tree N-9 still holds: there the
+/// waived candidate itself lands, and a waiver of another candidate answers nothing.
+///
+/// # Errors
+///
+/// A git fault, an unreadable note, or a class file that cannot be written.
+pub fn carried_waivers(
+    git: &Git,
+    policy: &Policy,
+    registry: Option<&crate::registry::Registry>,
+    (commit, tree): (&str, &str),
+    own: &[EvidenceRecord],
+    earlier: &[Earlier],
+) -> Result<Vec<EvidenceRecord>, String> {
+    use crate::evidence::{CheckId, Combined};
+    let listed = policy.answering(own.to_vec());
+    let digest = &policy.manifest_digest;
+    let open: Vec<CheckId> = policy
+        .checks
+        .iter()
+        .filter(|entry| entry.waivable && !entry.is_approval())
+        .map(|entry| CheckId::new(&entry.id, &entry.environment))
+        .filter(|id| {
+            let subject = policy.commit_keyed(id).then_some(commit);
+            crate::evidence::combine(&listed, id, digest, subject) != Combined::Pass
+                && policy.waiver(&listed, &[], id, commit).is_none()
+        })
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    let earlier: Vec<&Earlier> = earlier
+        .iter()
+        .filter(|candidate| candidate.tree != tree && seen.insert(candidate.commit.as_str()))
+        .collect();
+    if open.is_empty() || earlier.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(patch) = patch_id(git, commit)? else {
+        return Ok(Vec::new());
+    };
+    let mut carried: Vec<EvidenceRecord> = Vec::new();
+    for candidate in earlier {
+        if patch_id(git, &candidate.commit)?.as_ref() != Some(&patch) {
+            continue;
+        }
+        let records = policy.answering(crate::evidence::counted(
+            git,
+            crate::evidence::records_for(git, &candidate.tree)?,
+            registry,
+        )?);
+        for id in &open {
+            if carried.iter().any(|waiver| waiver.check == *id) {
+                continue;
+            }
+            let Some(waiver) = policy.waiver(&records, &[], id, &candidate.commit) else {
+                continue;
+            };
+            let here = outcome(&listed, id, commit, digest);
+            if here.is_some() && here == outcome(&records, id, &candidate.commit, digest) {
+                carried.push(waiver.clone());
+            }
+        }
+    }
+    Ok(carried)
+}
+
+/// G638: what check `id` showed about `commit` under manifest `digest`: for each of its run
+/// records about that commit, the verdict, the `why` and every unit that did not pass with its
+/// verdict and reason, as one sorted set. `None` when no such record exists.
+fn outcome(
+    records: &[EvidenceRecord],
+    id: &crate::evidence::CheckId,
+    commit: &str,
+    digest: &str,
+) -> Option<Vec<String>> {
+    let mut shown: Vec<String> = records
+        .iter()
+        .filter(|record| {
+            record.kind == crate::evidence::KIND_CHECK
+                && record.check == *id
+                && record.manifest_digest == digest
+                && record.subject.commit == commit
+        })
+        .map(|record| {
+            let mut units: Vec<String> = record
+                .units
+                .iter()
+                .filter(|unit| unit.verdict != crate::evidence::Verdict::Pass)
+                .map(|unit| json!([unit.id, unit.verdict, unit.reason]).to_string())
+                .collect();
+            units.sort();
+            json!({"verdict": record.verdict, "why": record.why, "units": units}).to_string()
+        })
+        .collect();
+    shown.sort();
+    shown.dedup();
+    (!shown.is_empty()).then_some(shown)
+}
+
+/// G638: the stable patch id of `commit` against its first parent; `None` for an empty diff.
+fn patch_id(git: &Git, commit: &str) -> Result<Option<String>, String> {
+    let diff = git
+        .run_bytes(
+            &["diff-tree", "-p", "--no-color", "--full-index", commit],
+            &[],
+            None,
+        )
+        .map_err(|error| error.message())?;
+    let id = git
+        .run_with(&["patch-id", "--stable"], &[], Some(diff.as_slice()))
+        .map_err(|error| error.message())?;
+    Ok(id.split_whitespace().next().map(str::to_owned))
 }
 
 /// G292: the paths approval check `entry` covers whose content differs between what `record`
