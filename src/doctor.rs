@@ -654,6 +654,23 @@ fn hooks_recovery(git: &Git, file: &str) -> String {
     }
 }
 
+/// G652: the state of a checkout whose missing hook entries are on main.
+const BEHIND_MAIN: &str = "behind_main";
+
+/// G652: whether the settings on main's tracking ref, as of the last fetch, hold every entry of
+/// `missing`, so this checkout gets them by taking main and no one need land anything.
+fn arrives_with_main(git: &Git, config: &Config, missing: &[&str]) -> bool {
+    let main = format!("refs/remotes/{}/{}", config.remote(), config.trunk());
+    let Ok(Some(text)) = git.file_at(&main, agent_settings::CLAUDE_SETTINGS_FILE) else {
+        return false;
+    };
+    let Ok(Value::Object(settings)) = serde_json::from_str(&text) else {
+        return false;
+    };
+    let on_main = agent_settings::missing_claude_events(&settings);
+    missing.iter().all(|event| !on_main.contains(event))
+}
+
 fn hooks_row(
     git: &Git,
     config: &Config,
@@ -687,10 +704,19 @@ fn hooks_row(
     let settings = agent_settings::read(&path)?;
     let missing = agent_settings::missing_claude_events(&settings);
     let mut row = json!({"name": "hooks", "state": state(missing.is_empty())});
-    if !missing.is_empty() {
+    let (behind, some_there) = agent_settings::claude_events_behind(&settings);
+    let arrives = some_there && !missing.is_empty() && arrives_with_main(git, config, &missing);
+    if arrives {
+        row["state"] = json!(BEHIND_MAIN);
+        row["missing"] = json!(missing);
+        row["behind"] = json!(behind);
+        row["note"] = json!(format!(
+            "{} on main holds these entries; this checkout gets them when it takes main",
+            agent_settings::CLAUDE_SETTINGS_FILE
+        ));
+    } else if !missing.is_empty() {
         row["missing"] = json!(missing);
         row["recovery"] = json!(hooks_recovery(git, agent_settings::CLAUDE_SETTINGS_FILE));
-        let (behind, some_there) = agent_settings::claude_events_behind(&settings);
         if some_there {
             // The project's settings carry bay, written by an older one: this bay hooks more.
             row["behind"] = json!(behind);
@@ -744,9 +770,11 @@ fn hooks_row(
             json!(recorded == agent_settings::unrelated_digest(&settings));
     }
     report.rows.push(row);
-    report
-        .rows
-        .push(claude_hooks_posture(&settings, missing.is_empty()));
+    let mut posture = claude_hooks_posture(&settings, missing.is_empty());
+    if arrives {
+        posture["state"] = json!(BEHIND_MAIN);
+    }
+    report.rows.push(posture);
     let home = crate::platform::home().map(std::path::PathBuf::from);
     hook_overrides_row(
         &agent_settings::claude_override_paths(Path::new(&info.toplevel), home.as_deref()),

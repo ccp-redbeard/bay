@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.29
+
+- A checkout behind main is no longer told its hooks are missing when main holds them.
+- `bay doctor` reads `behind_main` there and says taking main is all it needs.
+
 ## 0.6.28
 
 - A session outside a view hears to run `bay status` first, and who it acts as.
