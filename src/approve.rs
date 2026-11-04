@@ -187,16 +187,20 @@ fn records(repo: &Repo, only: Option<&str>) -> Result<Vec<ChangeRecord>, String>
         .map_err(|error| error.message())?;
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
-    for line in listed.lines() {
-        let Some((head, name)) = line.split_once(' ') else {
-            continue;
-        };
-        let id = name.trim_start_matches(FETCH_WAITING);
-        if only.is_some_and(|only| only != id) {
-            continue;
-        }
-        if let Ok(record) = chain.record_at(head) {
-            seen.insert(id.to_owned());
+    let heads: Vec<(&str, &str)> = listed
+        .lines()
+        .filter_map(|line| {
+            let (head, name) = line.split_once(' ')?;
+            let id = name.trim_start_matches(FETCH_WAITING);
+            only.is_none_or(|only| only == id).then_some((head, id))
+        })
+        .collect();
+    // G645: every record in one read, never a git call per change.
+    let names: Vec<&str> = heads.iter().map(|(head, _)| *head).collect();
+    let read = chain.records_at(&names).map_err(|error| error.message())?;
+    for ((_, id), record) in heads.iter().zip(read) {
+        if let Some(record) = record {
+            seen.insert((*id).to_owned());
             out.push(record);
         }
     }

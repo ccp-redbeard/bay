@@ -2081,6 +2081,8 @@ fn describe(
             "state": if landed.is_some_and(|found| found.revision == op.revision) { json!("published") } else { json!(op.state) },
             "outcome": op.outcome,
             "attempts": op.attempts.len(),
+            // G644: whether a runner will ask this blocked operation again by itself.
+            "asked_again": crate::publish::asked_again(op),
             "trunk_moved": op.trunk_moved,
             "policy_changed": op.policy_changed,
             "publish_retries": op.publish_retries,

@@ -250,6 +250,7 @@ fn probe(dir: &Path, executor: bool) -> Result<BayResult, String> {
             repository_row(&git, &config, &mut report);
             live_row(&git, &mut report);
             environments_row(&git, &config, executor, &mut report);
+            report.rows.extend(pre_merge_row(&git, &config));
         }
         if executor && !info.bare {
             check_env_row(&git, &config, &mut report);
@@ -1110,6 +1111,29 @@ fn environments_row(git: &Git, config: &Config, executor: bool, report: &mut Rep
         }
     }
     report.rows.push(row);
+}
+
+/// G642: the pre-merge checks every change waits for, whatever its files, so no change can merge
+/// at once (G403). A repository may mean that, so it is advice and never red. Present only when
+/// there is one.
+fn pre_merge_row(git: &Git, config: &Config) -> Option<Value> {
+    let trunk = format!("refs/remotes/{}/{}", config.remote(), config.trunk());
+    let policy = crate::policy::load_at(git, &trunk).ok().flatten()?;
+    // No glob a repository writes for its own files names this path; one that matches it matches all.
+    let any_path = ["bay-any-directory/bay-any-file".to_owned()];
+    let mut every: Vec<&str> = policy
+        .checks
+        .iter()
+        .filter(|check| check.stage != crate::policy::Stage::Post && check.wakes(&any_path))
+        .map(|check| check.id.as_str())
+        .collect();
+    every.sort_unstable();
+    every.dedup();
+    (!every.is_empty()).then(|| {
+        json!({"name": "pre_merge", "required": false, "state": "informational",
+            "every_change_waits_for": every,
+            "note": "every change waits for these checks, a document too: if one need not read every path, give it when_paths or stage = \"post\", and what it does not read merges at once"})
+    })
 }
 
 /// For a stated executor (G63): each `env` name of a required check in the policy at trunk, as

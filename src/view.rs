@@ -314,22 +314,92 @@ fn release(repo: &Repo, id: &str, ended: &Ended) -> Result<bool, GitError> {
                 return Ok(false);
             }
             if !holds_nothing_newer(&path, ended)? {
-                // G639: the view stays for its work. What its ignore rules match is not work and
-                // its change has ended, so that goes; one that fails is tried at the next start.
-                let _ = Git::new(&path).writing_tree().run(&["clean", "-fdXq"]);
+                // G639: the view stays for its work, and its change has ended, so the directories
+                // its ignore rules match go. A loose ignored file, such as an `.env`, stays: bay
+                // cannot tell it from work. One that fails is tried at the next start.
+                remove_ignored_directories(&path);
                 return Ok(false);
             }
-            let path_text = path.display().to_string();
-            // Plan W5: Git for Windows removes a path longer than 260 characters too.
-            repo.git
-                .writing_tree()
-                .run(&["worktree", "remove", "--force", &path_text])?;
+            remove_worktree(repo, &path).map_err(GitError::Spawn)?;
         }
     }
-    let _ = repo.git.run(&["worktree", "prune"]);
+    unregister(repo, &path);
     match std::fs::remove_file(journal_path(repo, id)) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(GitError::Spawn(error)),
         _ => Ok(true),
+    }
+}
+
+/// G646: removes the worktree at `path`, which holds nothing to keep. A build tool may leave
+/// read-only directories, which `git worktree remove` cannot empty, though it unregisters the
+/// view all the same: bay then finishes the removal, or the view stays for good, unreported.
+fn remove_worktree(repo: &Repo, path: &Path) -> std::io::Result<()> {
+    // Plan W5: Git for Windows removes a path longer than 260 characters too.
+    let path_text = path.display().to_string();
+    let _ = repo
+        .git
+        .writing_tree()
+        .run(&["worktree", "remove", "--force", &path_text]);
+    if std::fs::symlink_metadata(path).is_ok() {
+        remove_tree(path)?;
+    }
+    Ok(())
+}
+
+/// G647: drops the registration of the worktree at `path`, now gone, and no other's. `git worktree
+/// prune` would also drop a sibling whose folder is briefly absent (an unmounted disk), which
+/// then no longer works when its folder comes back.
+fn unregister(repo: &Repo, path: &Path) {
+    let path_text = path.display().to_string();
+    let _ = repo.git.run(&["worktree", "remove", "--force", &path_text]);
+}
+
+/// G639: removes each directory the ignore rules of the view at `path` match, whole.
+fn remove_ignored_directories(path: &Path) {
+    let git = Git::new(path);
+    let Ok(listed) = git.run(&[
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+    ]) else {
+        return;
+    };
+    for directory in listed.lines().filter(|line| line.ends_with('/')) {
+        let _ = remove_tree(&path.join(directory));
+    }
+}
+
+/// G646: removes the tree at `path`, read-only directories too. Symbolic links are removed and
+/// never followed, so nothing outside the tree changes.
+fn remove_tree(path: &Path) -> std::io::Result<()> {
+    make_writable(path);
+    std::fs::remove_dir_all(path)
+}
+
+/// Lets the owner empty every directory under `path`; one that cannot be read is left to the
+/// removal's own error.
+fn make_writable(path: &Path) {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return;
+    };
+    if !meta.is_dir() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = meta.permissions().mode();
+        if mode & 0o700 != 0o700 {
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o700));
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        make_writable(&entry.path());
     }
 }
 
@@ -395,7 +465,6 @@ fn holds_nothing_newer(path: &Path, ended: &Ended) -> Result<bool, GitError> {
 /// A git fault, or the view cannot be moved aside.
 pub fn discard(repo: &Repo, id: &str, saved: &str) -> Result<Option<PathBuf>, GitError> {
     let path = repo.view_path(id);
-    let path_text = path.display().to_string();
     let mut kept = None;
     if path.exists() && holds_unsaved(repo, &path, saved) {
         let aside = repo
@@ -404,15 +473,9 @@ pub fn discard(repo: &Repo, id: &str, saved: &str) -> Result<Option<PathBuf>, Gi
         crate::durable::rename(&path, &aside).map_err(GitError::Spawn)?;
         kept = Some(aside);
     } else {
-        let _ = repo
-            .git
-            .writing_tree()
-            .run(&["worktree", "remove", "--force", &path_text]);
-        if path.exists() {
-            std::fs::remove_dir_all(&path).map_err(GitError::Spawn)?;
-        }
+        remove_worktree(repo, &path).map_err(GitError::Spawn)?;
     }
-    repo.git.run(&["worktree", "prune"])?;
+    unregister(repo, &path);
     Ok(kept)
 }
 

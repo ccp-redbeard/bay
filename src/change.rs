@@ -789,6 +789,28 @@ impl<'a> Chain<'a> {
         parse_record(&text)
     }
 
+    /// G645: the record at each of `heads`, in one `git cat-file --batch` however many there are;
+    /// `None` for one that cannot be read.
+    ///
+    /// # Errors
+    ///
+    /// A git fault reading the batch.
+    pub fn records_at(&self, heads: &[&str]) -> Result<Vec<Option<ChangeRecord>>, ChainError> {
+        let names: Vec<String> = heads
+            .iter()
+            .map(|head| format!("{head}:{RECORD_FILE}"))
+            .collect();
+        Ok(self
+            .git
+            .objects(&names)?
+            .into_iter()
+            .map(|text| {
+                text.and_then(|text| String::from_utf8(text).ok())
+                    .and_then(|text| parse_record(&text).ok())
+            })
+            .collect())
+    }
+
     /// G200b: every chain this repository holds, in ref order, read by one `for-each-ref` and
     /// one `git cat-file --batch` of their records, however many chains there are. A record
     /// the batch cannot give is read by [`Chain::read`] on its own, and a chain that cannot be

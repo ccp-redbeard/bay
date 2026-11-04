@@ -1557,7 +1557,8 @@ impl BayResult {
             },
             Decision::Ok => queue_say(self)
                 .or_else(|| change_say(self))
-                .or_else(|| main_say(self))
+                .or_else(|| status_say(self))
+                .or_else(|| waiting_say(self))
                 .or_else(|| talk_say(self))
                 .or_else(|| update_say(self))
                 .unwrap_or_else(|| ok_say(self).to_owned()),
@@ -1734,6 +1735,192 @@ fn main_say(result: &BayResult) -> Option<String> {
     })
 }
 
+/// G643 (a fleet finding, 2026-11-04: a person read "Done; nothing else is needed." with three
+/// of their changes refused and a fourth out of tries): the sentence of a status listing. Main
+/// first when it is broken, then the reader's own changes when one needs someone.
+fn status_say(result: &BayResult) -> Option<String> {
+    let main = main_say(result);
+    let (own, needs_someone) = listing_say(result).unzip();
+    match (main, own) {
+        (Some(main), Some(own)) if needs_someone == Some(true) => Some(format!("{main} {own}")),
+        (Some(main), _) => Some(main),
+        (None, own) => own,
+    }
+}
+
+/// G648 (a fleet finding, 2026-11-04: with a change waiting, `bay waiting` read "Already set up:
+/// you can approve changes. See what waits for you with bay waiting."): its sentence says what
+/// waits, and with one change, the command that answers it.
+fn waiting_say(result: &BayResult) -> Option<String> {
+    let rows = result.detail.as_ref()?.get("waiting")?.as_array()?;
+    let ids: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| row["change"].as_str())
+        .collect();
+    Some(match (ids.as_slice(), rows.first()) {
+        ([], _) | (_, None) => "Nothing waits for you.".to_owned(),
+        ([id], Some(row)) => match row["waivable"][0]["waive"].as_str() {
+            Some(waive) => format!(
+                "1 change waits for you: {id}. A check did not pass; to let it through as a named gap, run {waive}."
+            ),
+            None => format!("1 change waits for you: {id}. To say yes, run bay approve {id}."),
+        },
+        (ids, _) => format!(
+            "{} changes wait for you: {}. `detail.waiting` lists each one's diff and command.",
+            ids.len(),
+            ids[..ids.len().min(SAID_IDS)].join(", ")
+        ),
+    })
+}
+
+/// Who the next step of one listed change belongs to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Owes {
+    /// Its author: a refusal bay will not retry by itself.
+    Author,
+    /// A person's signed yes.
+    Approver,
+    /// bay: being checked, in line, or to be asked again by itself.
+    Bay,
+    /// Nothing is submitted yet.
+    NotSubmitted,
+    /// Nothing: on main, given up, or adding nothing.
+    Nobody,
+}
+
+/// G643: who owes the next step of the change on status row `row`.
+fn owes(row: &Value) -> Owes {
+    if matches!(row["state"].as_str(), Some("landed" | "abandoned")) {
+        return Owes::Nobody;
+    }
+    let op = &row["operation"];
+    if op.is_null() {
+        return Owes::NotSubmitted;
+    }
+    if !op["lease"].is_null() {
+        return Owes::Bay;
+    }
+    let Some(reason) = op["outcome"].as_str() else {
+        return match op["state"].as_str() {
+            Some("blocked" | "failed") => Owes::Author,
+            Some("no_effect") => Owes::Nobody,
+            _ => Owes::Bay,
+        };
+    };
+    if reason == Reason::Queued.code() {
+        return Owes::Bay;
+    }
+    if reason == Reason::ApprovalPending.code() {
+        return Owes::Approver;
+    }
+    if out_of_tries(op) {
+        return Owes::Author;
+    }
+    let waits = op["retry_when"] == "after_wait";
+    if waits { Owes::Bay } else { Owes::Author }
+}
+
+/// G644: whether a check left this operation with no clear answer as often as bay asks it, so
+/// no runner asks again and waiting changes nothing.
+fn out_of_tries(op: &Value) -> bool {
+    op["outcome"] == Reason::CheckUnknown.code() && op["asked_again"] == false
+}
+
+/// How many ids a status sentence names before it counts the rest.
+const SAID_IDS: usize = 3;
+
+/// G643: the sentence of the reader's own changes, and whether one needs someone. `None` when
+/// the listing holds none of them: a read that describes no change has no such sentence.
+fn listing_say(result: &BayResult) -> Option<(String, bool)> {
+    let detail = result.detail.as_ref()?;
+    detail.get("flow")?;
+    let rows = detail.get("changes")?.as_array()?;
+    let of = |wanted: Owes| -> Vec<&str> {
+        rows.iter()
+            .filter(|row| owes(row) == wanted)
+            .filter_map(|row| row["change"].as_str())
+            .collect()
+    };
+    let (author, approver, moving, unsent) = (
+        of(Owes::Author),
+        of(Owes::Approver),
+        of(Owes::Bay),
+        of(Owes::NotSubmitted),
+    );
+    let total = author.len() + approver.len() + moving.len() + unsent.len();
+    if total == 0 {
+        return None;
+    }
+    let named = |ids: &[&str]| {
+        let more = ids.len().saturating_sub(SAID_IDS);
+        let shown = ids[..ids.len().min(SAID_IDS)].join(", ");
+        if more > 0 {
+            format!("{shown} and {more} more")
+        } else {
+            shown
+        }
+    };
+    let mut parts = Vec::new();
+    if !author.is_empty() {
+        let verb = if author.len() == 1 { "needs" } else { "need" };
+        parts.push(format!(
+            "{} {verb} a fix ({})",
+            author.len(),
+            named(&author)
+        ));
+    }
+    if !approver.is_empty() {
+        let verb = if approver.len() == 1 { "waits" } else { "wait" };
+        parts.push(format!(
+            "{} {verb} for a person's yes ({})",
+            approver.len(),
+            named(&approver)
+        ));
+    }
+    let needs_someone = !parts.is_empty();
+    // G643: "on the way" is true only with a runner to carry it (G67).
+    let carried = !moving.is_empty() && !no_live_runner(detail);
+    if carried {
+        let verb = if moving.len() == 1 { "is" } else { "are" };
+        parts.push(format!("{} {verb} on the way", moving.len()));
+    } else if !moving.is_empty() {
+        let verb = if moving.len() == 1 { "waits" } else { "wait" };
+        parts.push(format!(
+            "{} {verb} for a runner, and none is live",
+            moving.len()
+        ));
+    }
+    if !unsent.is_empty() {
+        let verb = if unsent.len() == 1 { "is" } else { "are" };
+        parts.push(format!("{} {verb} not submitted", unsent.len()));
+    }
+    let stalled = !moving.is_empty() && !carried;
+    let sentence = if stalled && !needs_someone {
+        format!(
+            "Of your {total} open changes, {}. Ask whoever runs bay here to start one.",
+            parts.join(", ")
+        )
+    } else if needs_someone {
+        format!(
+            "Of your {total} open changes, {}. `bay status <change>` says what each needs.",
+            parts.join(", ")
+        )
+    } else {
+        format!(
+            "Nothing needs you: of your {total} open changes, {}.",
+            parts.join(", ")
+        )
+    };
+    Some((sentence, needs_someone || stalled))
+}
+
+/// Whether this status read warns that no runner is live (G67).
+fn no_live_runner(detail: &Value) -> bool {
+    detail["warnings"]
+        .as_array()
+        .is_some_and(|warnings| warnings.iter().any(|row| row["code"] == "no_live_executor"))
+}
+
 /// The sentence of a status read of one change, from that change's own row (fleet findings,
 /// 2026-10-27: four seats read "Done; nothing else is needed" for a change still in line).
 fn change_say(result: &BayResult) -> Option<String> {
@@ -1779,6 +1966,12 @@ fn change_say(result: &BayResult) -> Option<String> {
             ),
             None => format!("{id} waits in line; bay checks it and adds it to main in its turn."),
         });
+    }
+    if out_of_tries(op) {
+        return Some(format!(
+            "{id}: a check gave no clear answer {} times, so bay stopped asking. Fix it and submit again, or see whether `bay waiting` lists it for a person to waive.",
+            crate::publish::UNKNOWN_RETRIES
+        ));
     }
     Reason::from_code(outcome).map(|reason| format!("{id}: {}", reason.say(None)))
 }
@@ -2056,6 +2249,28 @@ mod tests {
         );
         let plain = Reason::UpdateUnavailable.say(Some(&json!({"why": "offline"})));
         assert!(plain.contains("Try again later"), "{plain}");
+    }
+
+    #[test]
+    fn a_status_listing_says_nothing_needs_you_only_with_a_live_runner() {
+        // G643: two changes in line. A read with no runner warning, and one with it.
+        let row = |id: &str| {
+            json!({"change": id, "state": "ready", "operation":
+                {"lease": null, "outcome": Reason::Queued.code(), "state": "admitted"}})
+        };
+        let said = |warnings: serde_json::Value| {
+            BayResult::ok(
+                json!({"flow": {}, "warnings": warnings, "red": [], "red_pending": [],
+                "changes": [row("aaaa1111"), row("bbbb2222")]}),
+            )
+            .say()
+        };
+        let live = said(json!([]));
+        assert!(live.starts_with("Nothing needs you"), "{live}");
+        assert!(live.contains("2 are on the way"), "{live}");
+        let none = said(json!([{"code": "no_live_executor"}]));
+        assert!(!none.contains("Nothing needs you"), "{none}");
+        assert!(none.contains("none is live"), "{none}");
     }
 
     #[test]

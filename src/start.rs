@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::change::{
     Actor, Chain, ChangeRecord, ChangeState, Intent, IntentClaim, RECORD_SCHEMA, StartedFrom,
@@ -135,6 +135,7 @@ pub fn start(dir: &Path, request: &StartRequest) -> BayResult {
     if resumed.is_none() || request.adopt {
         list_overlaps(&repo, &mut result);
     }
+    say_pre_merge(&repo, &mut result);
     // G175: the opt-in warm-up of the view's history, once the view is made.
     if repo.config.warm_history() {
         warm_history(&repo, &mut result);
@@ -142,10 +143,7 @@ pub fn start(dir: &Path, request: &StartRequest) -> BayResult {
     // G97: views of ended changes past the retention window go, newer work never.
     released.extend(reclaim(&repo, dir));
     if !released.is_empty()
-        && let Some(detail) = result
-            .detail
-            .as_mut()
-            .and_then(serde_json::Value::as_object_mut)
+        && let Some(detail) = result.detail.as_mut().and_then(Value::as_object_mut)
     {
         detail.insert("released_views".to_owned(), json!(released));
     }
@@ -185,11 +183,7 @@ fn list_overlaps(repo: &Repo, result: &mut BayResult) {
     let Some(id) = result.change.clone() else {
         return;
     };
-    let Some(detail) = result
-        .detail
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-    else {
+    let Some(detail) = result.detail.as_mut().and_then(Value::as_object_mut) else {
         return;
     };
     let listed = Chain::new(&repo.git)
@@ -205,6 +199,57 @@ fn list_overlaps(repo: &Repo, result: &mut BayResult) {
     detail.insert(key.to_owned(), value);
 }
 
+/// G641: a start states, in its detail (`pre_merge`), whether a check will hold this change's
+/// merge: `at_once`, and each pre-merge check a file under its declared paths can wake. A false
+/// "may wait" costs a look; `at_once` is never said where the merge would wait for a check, the
+/// policy or another change. A repository with no checks, a lane and an unreadable policy say
+/// nothing. The merge itself judges the files the change really holds.
+fn say_pre_merge(repo: &Repo, result: &mut BayResult) {
+    if result.decision != Decision::Ok {
+        return;
+    }
+    let Some(id) = result.change.clone() else {
+        return;
+    };
+    let Ok((_, record)) = Chain::new(&repo.git).read(&id) else {
+        return;
+    };
+    let main = repo.trunk_tracking_ref();
+    let Ok(Some(policy)) = crate::policy::load_at(&repo.git, &main) else {
+        return;
+    };
+    if record.lane.is_some() || policy.unchecked || policy.checks.is_empty() {
+        return;
+    }
+    let declared: Vec<crate::policy::DeclaredPath> = inputs::paths(&record.declared_inputs)
+        .into_iter()
+        .map(|path| {
+            let is_file = !path.ends_with('/')
+                && repo
+                    .git
+                    .run(&["cat-file", "-t", &format!("{main}:{path}")])
+                    .is_ok_and(|kind| kind == "blob");
+            crate::policy::DeclaredPath { path, is_file }
+        })
+        .collect();
+    let checks: Vec<Value> = policy
+        .pre_merge(&declared)
+        .into_iter()
+        .map(|(entry, path, example)| {
+            json!({"check": entry.id, "environment": entry.environment,
+                "path": path, "example": example})
+        })
+        .collect();
+    let holds_policy = declared.is_empty() || declared.iter().any(|path| policy.holds_policy(path));
+    let at_once = checks.is_empty() && !holds_policy && record.after.is_empty();
+    if let Some(detail) = result.detail.as_mut().and_then(Value::as_object_mut) {
+        detail.insert(
+            "pre_merge".to_owned(),
+            json!({"at_once": at_once, "checks": checks}),
+        );
+    }
+}
+
 /// G175: with `[view] warm_history`, a start that made or kept a view fetches the history of
 /// its change's declared paths there, and its detail says how much (`history`).
 fn warm_history(repo: &Repo, result: &mut BayResult) {
@@ -214,14 +259,10 @@ fn warm_history(repo: &Repo, result: &mut BayResult) {
     let Some(id) = result.change.clone() else {
         return;
     };
-    let Some(detail) = result
-        .detail
-        .as_mut()
-        .and_then(serde_json::Value::as_object_mut)
-    else {
+    let Some(detail) = result.detail.as_mut().and_then(Value::as_object_mut) else {
         return;
     };
-    let Some(view_path) = detail.get("view").and_then(serde_json::Value::as_str) else {
+    let Some(view_path) = detail.get("view").and_then(Value::as_str) else {
         return;
     };
     let view_path = std::path::PathBuf::from(view_path);

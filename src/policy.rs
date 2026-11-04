@@ -775,6 +775,30 @@ impl CheckEntry {
             .is_none_or(|globs| changed.iter().any(|path| globs_match(globs, path)))
     }
 
+    /// G641: a file at or under `declared` that wakes this check, or `None` when no file there
+    /// can. It reads the globs, never the tree. It tries an example of each glob, so an exclusion
+    /// is read as the check reads it; an exclusion aimed at exactly the example's name could
+    /// hide a file, which then waits for the check though the start said it would not.
+    #[must_use]
+    pub fn can_wake(&self, declared: &DeclaredPath) -> Option<String> {
+        let Some(globs) = &self.when_paths else {
+            return Some(declared.shown());
+        };
+        if declared.is_file {
+            return globs_match(globs, &declared.path).then(|| declared.path.clone());
+        }
+        let top = declared.path.trim_end_matches('/');
+        let parts: Vec<&str> = top.split('/').filter(|part| !part.is_empty()).collect();
+        globs
+            .iter()
+            .filter(|glob| !glob.starts_with('!'))
+            .flat_map(|glob| glob_examples(glob, &parts))
+            .find(|example| {
+                globs_match(globs, example)
+                    && (!declared.path.ends_with('/') || example.len() > top.len())
+            })
+    }
+
     /// The paths of `changed` this check's `when_paths` match, in their order; every one of
     /// them without `when_paths`. What a person approves (G280).
     #[must_use]
@@ -1021,6 +1045,55 @@ impl Policy {
                 serde_json::to_string(entry.when_paths.as_deref().unwrap_or_default())
                     .unwrap_or_default()
             ),
+        })
+    }
+
+    /// G641: for a change declaring `declared`, each pre-merge check a file there can wake, as
+    /// (check, the declared path, an example file), reading the same rule as
+    /// `crate::publish::needs_no_check` from the globs alone, so it holds for a file not yet
+    /// written. `declared` is empty for a change to the whole tree. A declared path holding the
+    /// policy or an adapter wakes every check.
+    #[must_use]
+    pub fn pre_merge(&self, declared: &[DeclaredPath]) -> Vec<(ManifestEntry, String, String)> {
+        let whole = [DeclaredPath {
+            path: String::new(),
+            is_file: false,
+        }];
+        let declared = if declared.is_empty() {
+            &whole[..]
+        } else {
+            declared
+        };
+        self.manifest
+            .iter()
+            .filter_map(|entry| {
+                let id = crate::evidence::CheckId::new(&entry.id, &entry.environment);
+                let check = self.check(&id)?;
+                declared.iter().find_map(|path| {
+                    let example = if self.holds_policy(path) {
+                        Some(path.shown())
+                    } else {
+                        check.can_wake(path)
+                    }?;
+                    Some((entry.clone(), path.path.clone(), example))
+                })
+            })
+            .collect()
+    }
+
+    /// G641: whether `declared` can hold the policy or an adapter: a change to those is never
+    /// a change no check covers.
+    #[must_use]
+    pub fn holds_policy(&self, declared: &DeclaredPath) -> bool {
+        let mut policy = self.paths();
+        policy.push(".bay/".to_owned());
+        policy.iter().any(|path| {
+            let path = path.trim_end_matches('/');
+            let top = declared.path.trim_end_matches('/');
+            top.is_empty()
+                || top == path
+                || top.starts_with(&format!("{path}/"))
+                || (!declared.is_file && path.starts_with(&format!("{top}/")))
         })
     }
 
@@ -2359,6 +2432,69 @@ fn validate_retry(entry: &CheckEntry) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// G641: a path a change declares. `is_file` when it is a file on main, so nothing can sit under
+/// it. A path main does not hold yet may become a file or a directory, and is read as both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredPath {
+    pub path: String,
+    pub is_file: bool,
+}
+
+impl DeclaredPath {
+    /// The path as an example file: the whole tree has no name of its own.
+    fn shown(&self) -> String {
+        if self.path.is_empty() {
+            "any file".to_owned()
+        } else {
+            self.path.clone()
+        }
+    }
+}
+
+/// G641: the name an example file takes where a glob leaves the name open.
+const EXAMPLE_NAME: &str = "example";
+
+/// G641: example paths `glob` matches at or under the path parts `top`.
+fn glob_examples(glob: &str, top: &[&str]) -> Vec<String> {
+    let parts: Vec<&str> = match glob.strip_suffix('/') {
+        Some(dir) => dir.split('/').chain(["*", "**"]).collect(),
+        None => glob.split('/').collect(),
+    };
+    let mut found = Vec::new();
+    collect_examples(&parts, top, &mut Vec::new(), &mut found);
+    found
+}
+
+fn collect_examples(glob: &[&str], top: &[&str], path: &mut Vec<String>, found: &mut Vec<String>) {
+    let Some((part, rest)) = glob.split_first() else {
+        if top.is_empty() && !path.is_empty() {
+            found.push(path.join("/"));
+        }
+        return;
+    };
+    // The next part of the path, and what is left to match after it.
+    let (name, next_glob, next_top) = match (*part, top.split_first()) {
+        ("**", Some((name, tail))) => {
+            collect_examples(rest, top, path, found);
+            ((*name).to_owned(), glob, tail)
+        }
+        ("**", None) => {
+            collect_examples(rest, top, path, found);
+            (EXAMPLE_NAME.to_owned(), rest, top)
+        }
+        (part, Some((name, tail))) => {
+            if !part_matches(part.as_bytes(), name.as_bytes()) {
+                return;
+            }
+            ((*name).to_owned(), rest, tail)
+        }
+        (part, None) => (part.replace('*', EXAMPLE_NAME).replace('?', "x"), rest, top),
+    };
+    path.push(name);
+    collect_examples(next_glob, next_top, path, found);
+    path.pop();
 }
 
 /// Whether the `when_paths` list `globs` matches changed path `path` (G500), read in order as

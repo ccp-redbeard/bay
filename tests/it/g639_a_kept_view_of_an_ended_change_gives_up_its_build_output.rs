@@ -7,8 +7,12 @@
 //! on the machine removes them from each kept view, and leaves the edit, the untracked file and
 //! the view itself. A view whose change has not ended keeps its build output.
 //!
-//! The guard to mutate, in `src/view.rs`: in `release`, the `clean` of a view that holds something
-//! newer (drop it, and the first test finds the build output still there).
+//! Only directories go. A loose ignored file, such as an `.env`, stays: bay cannot tell it from
+//! work, and this view was kept because someone may come back to it.
+//!
+//! Guards to mutate, in `src/view.rs`: in `release`, the `remove_ignored_directories` call (the
+//! first test finds the build output still there); `remove_ignored_directories`, a plain `git
+//! clean -fdXq` (the third test finds the `.env` gone).
 
 // Each case runs a shell script (the check's adapter), so these run on Unix only.
 #![cfg(unix)]
@@ -31,7 +35,7 @@ fn seeded(test_box: &TestBox) -> PathBuf {
         &repo,
         &[
             ("src/a.rs", "fn a() {}\n"),
-            (".gitignore", "node_modules/\n"),
+            (".gitignore", "node_modules/\n.env\n"),
         ],
         &files,
     );
@@ -99,4 +103,24 @@ fn a_view_whose_change_has_not_ended_keeps_its_build_output() {
             view.display()
         );
     }
+}
+
+#[test]
+fn a_loose_ignored_file_in_a_kept_view_stays() {
+    let test_box = TestBox::new();
+    let repo = seeded(&test_box);
+    let view = started(&test_box, &repo, "edited");
+    std::fs::write(view.join(".env"), "TOKEN=kept\n").unwrap();
+    let (code, landed) = result_json(test_box.bay(&view).args(["merge", "--wait"]));
+    assert_eq!(code, 0, "{landed}");
+    std::fs::write(view.join("src/a.rs"), "fn a() { later() }\n").unwrap();
+
+    test_box.bay_ok(&repo, &["start", "CARD-NEXT", "--paths", "src/"]);
+
+    assert!(!view.join("node_modules").exists(), "the output stayed");
+    assert_eq!(
+        std::fs::read_to_string(view.join(".env")).unwrap(),
+        "TOKEN=kept\n",
+        "bay cannot tell a loose ignored file from work"
+    );
 }

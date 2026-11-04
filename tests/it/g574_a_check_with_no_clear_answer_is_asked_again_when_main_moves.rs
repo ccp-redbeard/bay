@@ -8,7 +8,8 @@
 //! The pre check gives no result for a tree with `unknown/` while `conf/state` says `away`.
 //!
 //! Guards to mutate, in `src/publish.rs` `asked_again`: drop the `CheckUnknown` arm (the change
-//! waits after main moves), or the bound (a fourth candidate is checked).
+//! waits after main moves), or the bound (a fourth candidate is checked). G644, in `src/result.rs`
+//! `change_say`: drop the `out_of_tries` test (the third-try case reads "Wait for it.").
 
 // Each case runs shell scripts (the adapter), so these run on Unix only.
 #![cfg(unix)]
@@ -181,4 +182,16 @@ fn a_check_with_no_clear_answer_is_asked_again_at_most_three_times() {
 
     // THEN it was checked on three candidates in all, and waits for its author.
     assert_eq!(line.op(&id), (Value::from("CHECK_UNKNOWN"), 3), "{ran:?}");
+
+    // G644 (a fleet finding, 2026-11-04: a person read "Wait for it." for 23 hours): out of tries,
+    // its sentence says bay stopped asking, never to wait, and its listing that it needs a fix.
+    let read = line.test_box.bay_ok(&line.repo, &["status", &id]);
+    let said = read["say"].as_str().unwrap();
+    assert!(said.contains("bay stopped asking"), "{read}");
+    assert!(!said.contains("Wait for it"), "{read}");
+    let listing = line.test_box.bay_ok(&line.repo, &["status"]);
+    assert!(
+        listing["say"].as_str().unwrap().contains(&id),
+        "the listing does not name it: {listing}"
+    );
 }

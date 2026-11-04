@@ -57,6 +57,9 @@ fn waiting_lists_the_held_change_with_its_candidate_paths_and_diff_and_nothing_e
     let listed = trunk.waiting(&trunk.approver_box);
     assert_eq!(listed["detail"]["approver"], APPROVER, "{listed}");
     let items = listed["detail"]["waiting"].as_array().unwrap();
+    // G648: the sentence says what waits, and the command that answers it.
+    let said = listed["say"].as_str().unwrap();
+    assert!(said.contains(&format!("bay approve {id}")), "{listed}");
     assert_eq!(items.len(), 1, "{listed}");
     let item = &items[0];
     assert_eq!(item["change"], id.as_str(), "{listed}");
@@ -93,6 +96,7 @@ fn waiting_lists_the_held_change_with_its_candidate_paths_and_diff_and_nothing_e
     let listed = trunk.waiting(&trunk.stranger_box);
     assert_eq!(listed["detail"]["approver"], STRANGER, "{listed}");
     assert_eq!(listed["detail"]["waiting"], json!([]), "{listed}");
+    assert_eq!(listed["say"], "Nothing waits for you.", "{listed}");
 
     // With no approver set, every waiting change, and who can approve it.
     let listed = trunk.waiting(&trunk.repo);

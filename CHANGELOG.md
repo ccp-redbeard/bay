@@ -13,10 +13,19 @@
 - The merge names the waiver in `coverage_gaps`, with `carried_from`, the candidate the approver waived.
 - The checks the waived failure stopped run on the rebuild before it merges.
 - A view of an ended change kept for its work loses its ignored build output at the next `bay start`.
-- Its edits, its untracked files and the view itself stay.
+- Its edits, its untracked files, loose ignored files such as `.env`, and the view itself stay.
 - `bay start` removes this clone's day-old half-written packs; before, only a runner's pass did.
 - Below the disk floor, `bay start` frees those packs and ended views first, then measures again.
 - A `DISK_LOW` refusal names the views it released in `detail.released_views`.
+- A plain `bay status` now says who owes each open change's next step, and names those needing someone.
+- Before, it could say "Done; nothing else is needed." with changes refused.
+- A change a check left unanswered three times says bay stopped asking, never "Wait for it."
+- `bay waiting` reads every change in one call: seconds, not minutes, on a large store.
+- `bay waiting` says what waits for you and, for one change, the command that answers it.
+- `bay start` states in `detail.pre_merge` whether a check will hold the change's merge, and names it.
+- `bay doctor` names a pre-merge check every change waits for; it is advice, never red.
+- A view holding read-only build output is now released; before, it stayed for good, unreported.
+- Releasing a view no longer unregisters another worktree whose folder is briefly absent.
 - When one of those fails, `bay waiting` asks the approver about that check only.
 - A change refreshed with `bay start <change>` reads the waiver from the remote, so it carries too.
 - Before, every merge on main voided a waiver that its change had not yet used.
