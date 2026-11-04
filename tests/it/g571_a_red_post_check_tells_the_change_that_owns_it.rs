@@ -182,7 +182,10 @@ impl Trunk {
         if out.trim().is_empty() {
             return String::new();
         }
-        let parsed: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("{out:?}"));
+        // A session start's stdout is its context as plain text; other events answer in JSON.
+        let Ok(parsed) = serde_json::from_str::<Value>(&out) else {
+            return out;
+        };
         parsed["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap_or_default()
