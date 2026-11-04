@@ -200,7 +200,7 @@ fn a_refusal_reaches_a_later_session_of_the_same_actor_outside_the_view() {
     // Another actor's session is not told of this actor's refusal.
     let (code, out) = session_start_as(&test_box, &repo, "s-other", Some("someone-else"));
     assert_eq!(code, Some(0), "{out}");
-    assert_eq!(out, "", "another actor's refusal: {out}");
+    assert!(!out.contains("refused"), "another actor's refusal: {out}");
 }
 
 #[test]
@@ -460,4 +460,41 @@ fn an_undo_whose_effect_is_already_gone_opens_no_change() {
     assert_eq!(test_box.git_bare(&remote, &["rev-parse", "main"]), tip);
     assert_eq!(refs(&test_box, &remote, "refs/bay/changes/"), changes);
     assert_eq!(refs(&test_box, &remote, "refs/bay/intent/"), claims);
+}
+
+// G651: outside a view, a session hears to run `bay status` and who it acts as. Guards to mutate,
+// in `src/session.rs`: drop `orientation` (these cases hear nothing); drop its policy test (the
+// last case hears a line); drop `named` (the first case reads as the user name).
+#[test]
+fn a_session_outside_a_view_hears_to_run_status_and_who_it_acts_as() {
+    let test_box = TestBox::new();
+    let repo = test_box.repo_any("repo");
+    test_box.seed_with_check(
+        &repo,
+        &[("src/a.rs", "fn a() {}\n")],
+        &support::unchecked_files(),
+    );
+
+    let (code, named) = session_start_as(&test_box, &repo, "s-named", Some("a-seat"));
+    assert_eq!(code, Some(0), "{named}");
+    assert!(
+        named.contains("you act as a-seat. Run `bay status` first"),
+        "{named}"
+    );
+
+    let (code, unnamed) = session_start_as(&test_box, &repo, "s-unnamed", Some(""));
+    assert_eq!(code, Some(0), "{unnamed}");
+    assert!(unnamed.contains("BAY_ACTOR is not set"), "{unnamed}");
+}
+
+#[test]
+fn a_repository_without_a_policy_on_main_hears_nothing() {
+    let test_box = TestBox::new();
+    let repo = test_box.repo_any("repo");
+    test_box.seed_trunk(&repo, &[("src/a.rs", "fn a() {}\n")]);
+
+    let (code, heard) = session_start(&test_box, &repo, "s-plain");
+
+    assert_eq!(code, Some(0), "{heard}");
+    assert_eq!(heard, "", "{heard}");
 }

@@ -598,6 +598,8 @@ pub fn session_start(dir: &Path, input: &str) -> String {
         .unwrap_or_default();
     if let Some(id) = view.as_deref() {
         out.push_str(&overlap_lines(&repo, id));
+    } else {
+        out.push_str(&orientation(&repo, &actor));
     }
     for change in json["detail"]["changes"].as_array().into_iter().flatten() {
         let Some(id) = change["change"].as_str() else {
@@ -608,6 +610,29 @@ pub fn session_start(dir: &Path, input: &str) -> String {
         }
     }
     out
+}
+
+/// G651 (a fleet finding, 2026-11-04: a new session oriented itself with some thirty lines of raw
+/// Git, read its talks from their refs and never ran `bay status`): what a session outside any
+/// view hears first in a repository that merges with bay, and who it acts as. A session that
+/// falls back to the user name is told, as work under that name reads as no one's in particular.
+/// Empty where main holds no policy: bay is not how that repository merges.
+fn orientation(repo: &Repo, actor: &str) -> String {
+    let policy = format!(
+        "{}:{}",
+        repo.trunk_tracking_ref(),
+        crate::policy::POLICY_PATH
+    );
+    if repo.git.run(&["cat-file", "-e", &policy]).is_err() {
+        return String::new();
+    }
+    let named = crate::change::actor_source() == crate::change::ActorSource::Env;
+    let who = if named {
+        format!("you act as {actor}")
+    } else {
+        format!("you act as {actor}, the user name, as BAY_ACTOR is not set")
+    };
+    format!("bay: {who}. Run `bay status` first: it says what needs you.\n")
 }
 
 /// The most characters of an overlap line.

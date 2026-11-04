@@ -148,6 +148,8 @@ session is being told of its refusals; `waiting_for` says what a queued change w
   beforehand, in `detail.pre_merge`: `at_once`, and in `checks` each pre-merge check a file under your declared
   paths can wake, with that path and an example file. To stay fast, narrow your paths. `bay doctor` names a
   check every change waits for (`pre_merge`).
+- A session that starts outside a view hears who it acts as and to run `bay status` first. Do that before
+  you read refs or logs by hand.
 - A plain `bay status` says in `say` who owes the next step of your open changes, and names those that need a
   fix or a person's yes, and the talks you owe a reply (`detail.talks_owed`). "Nothing needs you" means bay is
   moving the rest. Read talks this way, never from their refs.

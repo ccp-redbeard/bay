@@ -2,6 +2,8 @@
 
 ## 0.6.28
 
+- A session outside a view hears to run `bay status` first, and who it acts as.
+- It also hears when it falls back to the user name because `BAY_ACTOR` is not set.
 - A view of an ended change kept for its work loses its ignored build output at the next `bay start`.
 - Its edits, its untracked files, loose ignored files such as `.env`, and the view itself stay.
 - `bay start` removes this clone's day-old half-written packs; before, only a runner's pass did.

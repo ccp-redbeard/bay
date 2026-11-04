@@ -131,11 +131,26 @@ pub fn start(dir: &Path, request: &StartRequest) -> BayResult {
         None => open(&repo, request),
     };
     let mut result = result.unwrap_or_else(BayResult::failed);
-    // NEW-8: a change opened or adopted hears of the live changes that declare its files.
-    if resumed.is_none() || request.adopt {
-        list_overlaps(&repo, &mut result);
+    // One read of the change for both statements below: `bay start` has a spawn budget (G200).
+    let record = result
+        .change
+        .clone()
+        .filter(|_| result.decision == Decision::Ok)
+        .map(|id| {
+            Chain::new(&repo.git)
+                .read(&id)
+                .map(|(_, record)| record)
+                .map_err(|error| error.message())
+        });
+    if let Some(record) = &record {
+        // NEW-8: a change opened or adopted hears of the live changes that declare its files.
+        if resumed.is_none() || request.adopt {
+            list_overlaps(&repo, record, &mut result);
+        }
+        if let Ok(record) = record {
+            say_pre_merge(&repo, record, &mut result);
+        }
     }
-    say_pre_merge(&repo, &mut result);
     // G175: the opt-in warm-up of the view's history, once the view is made.
     if repo.config.warm_history() {
         warm_history(&repo, &mut result);
@@ -176,22 +191,16 @@ fn names_change(repo: &Repo, request: &StartRequest) -> Option<String> {
 /// declared paths overlap the change's own (`overlaps`, `crate::overlap`), from the chains this
 /// repository already holds, or why they could not be read (`overlaps_unread`). It never
 /// refuses: the listing is what the work may meet.
-fn list_overlaps(repo: &Repo, result: &mut BayResult) {
-    if result.decision != Decision::Ok {
-        return;
-    }
+fn list_overlaps(repo: &Repo, record: &Result<ChangeRecord, String>, result: &mut BayResult) {
     let Some(id) = result.change.clone() else {
         return;
     };
     let Some(detail) = result.detail.as_mut().and_then(Value::as_object_mut) else {
         return;
     };
-    let listed = Chain::new(&repo.git)
-        .read(&id)
-        .map_err(|error| error.message())
-        .and_then(|(_, record)| {
-            crate::overlap::overlaps(repo, &id, &inputs::paths(&record.declared_inputs))
-        });
+    let listed = record.as_ref().map_err(String::clone).and_then(|record| {
+        crate::overlap::overlaps(repo, &id, &inputs::paths(&record.declared_inputs))
+    });
     let (key, value) = match listed {
         Ok(overlaps) => ("overlaps", json!(overlaps)),
         Err(why) => ("overlaps_unread", json!(why)),
@@ -204,16 +213,7 @@ fn list_overlaps(repo: &Repo, result: &mut BayResult) {
 /// "may wait" costs a look; `at_once` is never said where the merge would wait for a check, the
 /// policy or another change. A repository with no checks, a lane and an unreadable policy say
 /// nothing. The merge itself judges the files the change really holds.
-fn say_pre_merge(repo: &Repo, result: &mut BayResult) {
-    if result.decision != Decision::Ok {
-        return;
-    }
-    let Some(id) = result.change.clone() else {
-        return;
-    };
-    let Ok((_, record)) = Chain::new(&repo.git).read(&id) else {
-        return;
-    };
+fn say_pre_merge(repo: &Repo, record: &ChangeRecord, result: &mut BayResult) {
     let main = repo.trunk_tracking_ref();
     let Ok(Some(policy)) = crate::policy::load_at(&repo.git, &main) else {
         return;
