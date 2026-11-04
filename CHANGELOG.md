@@ -12,6 +12,8 @@
 - It carries only when the patch is the same and the check fails there the same way.
 - The merge names the waiver in `coverage_gaps`, with `carried_from`, the candidate the approver waived.
 - The checks the waived failure stopped run on the rebuild before it merges.
+- A view of an ended change kept for its work loses its ignored build output at the next `bay start`.
+- Its edits, its untracked files and the view itself stay.
 - When one of those fails, `bay waiting` asks the approver about that check only.
 - A change refreshed with `bay start <change>` reads the waiver from the remote, so it carries too.
 - Before, every merge on main voided a waiver that its change had not yet used.

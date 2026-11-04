@@ -273,6 +273,8 @@ pub struct Ended {
 /// damaged one) and a locked worktree are kept, and so is a view whose worktree git does not
 /// remove: nothing is deleted by hand. The view's worktree and its journal both go, so
 /// `bay status` no longer lists it; a view whose directory is already gone loses its journal.
+/// A view kept because it holds something newer still loses the files its ignore rules match
+/// (G639).
 ///
 /// One view's fault keeps that view and the pass goes on. Returns the ids it released.
 #[must_use]
@@ -308,7 +310,13 @@ fn release(repo: &Repo, id: &str, ended: &Ended) -> Result<bool, GitError> {
             let Some(admin) = worktree_admin(repo, &path) else {
                 return Ok(false);
             };
-            if admin.join("locked").exists() || !holds_nothing_newer(&path, ended)? {
+            if admin.join("locked").exists() {
+                return Ok(false);
+            }
+            if !holds_nothing_newer(&path, ended)? {
+                // G639: the view stays for its work. What its ignore rules match is not work and
+                // its change has ended, so that goes; one that fails is tried at the next start.
+                let _ = Git::new(&path).writing_tree().run(&["clean", "-fdXq"]);
                 return Ok(false);
             }
             let path_text = path.display().to_string();
