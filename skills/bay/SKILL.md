@@ -163,6 +163,8 @@ session is being told of its refusals; `waiting_for` says what a queued change w
   lifts a hold), `after_setup` (install, keys, config, an upgrade or the network), `after_new_main`
   (main must change first), `never`. `next_step` says the exact step. bay refuses an unchanged
   retry, except where it retries itself.
+- A refusal judges the path, not where you stand. Another directory, an absolute path or a shell redirect
+  gets the same answer: do `next_step`, or ask the user. Never route around it.
 - Unknown is not success. A missing, unreadable or unexpected result is a failure to report.
 
 `allowed` uses four words. What each one means:
