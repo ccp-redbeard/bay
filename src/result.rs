@@ -1741,10 +1741,28 @@ fn main_say(result: &BayResult) -> Option<String> {
 fn status_say(result: &BayResult) -> Option<String> {
     let main = main_say(result);
     let (own, needs_someone) = listing_say(result).unzip();
-    match (main, own) {
+    let changes = match (main, own) {
         (Some(main), Some(own)) if needs_someone == Some(true) => Some(format!("{main} {own}")),
         (Some(main), _) => Some(main),
         (None, own) => own,
+    };
+    let talks = talks_say(result);
+    match (changes, talks) {
+        (Some(changes), Some(talks)) => Some(format!("{changes} {talks}")),
+        (changes, talks) => changes.or(talks),
+    }
+}
+
+/// G650 (a fleet finding, 2026-11-04: a new session found five overdue talks only by reading raw
+/// refs): the sentence of the talks whose reply the reader owes, which `detail.talks` lists.
+fn talks_say(result: &BayResult) -> Option<String> {
+    let owed = result.detail.as_ref()?.get("talks_owed")?.as_array()?;
+    match owed.len() {
+        0 => None,
+        1 => Some("You owe a reply on 1 talk; `detail.talks` lists it.".to_owned()),
+        count => Some(format!(
+            "You owe a reply on {count} talks; `detail.talks` lists them."
+        )),
     }
 }
 

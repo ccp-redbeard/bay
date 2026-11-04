@@ -149,7 +149,8 @@ session is being told of its refusals; `waiting_for` says what a queued change w
   paths can wake, with that path and an example file. To stay fast, narrow your paths. `bay doctor` names a
   check every change waits for (`pre_merge`).
 - A plain `bay status` says in `say` who owes the next step of your open changes, and names those that need a
-  fix or a person's yes. "Nothing needs you" means bay is moving the rest.
+  fix or a person's yes, and the talks you owe a reply (`detail.talks_owed`). "Nothing needs you" means bay is
+  moving the rest. Read talks this way, never from their refs.
 - `bay status` describes your own changes and counts the others; `bay status <change>` reads one.
 - `bay status` with `detail.warnings` naming `no_live_runner`: work is queued and no runner has
   been seen recently. Tell the user a runner must run (`bay runner run`, or
@@ -241,7 +242,8 @@ name no record names comes back in `detail.unseen` with a `detail.warning`: chec
 - `bay merge` and `bay undo` list the open talks about that change in `detail.open_talks`. Read them;
   they never block the merge.
 - With a `[plugin.wake] command`, bay wakes your session once for a talk to you, and once when a runner
-  merges your change or blocks it on a step that is yours (`cause: "outcome"`). The plugin's answer
+  merges your change, blocks it on a step that is yours, or finds it conflicts while it waits in line
+  (`cause: "outcome"`). Your repository's command may start a session when yours has ended. The plugin's answer
   is the event's `wake` in `bay status --since`. An outcome your own `bay merge --wait` returns wakes nothing.
 
 ## Set up a repository (only when the user asks)

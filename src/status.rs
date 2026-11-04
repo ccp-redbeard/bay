@@ -958,6 +958,7 @@ fn run(dir: &Path, change: Option<&str>, deadline: Duration) -> Result<BayResult
         "quarantines": sections.quarantines,
         "red": red_rows_now,
         "red_pending": red_pending,
+        "talks_owed": talks_owed(&repo, &sections.talks),
         "talks": sections.talks,
         "targets": sections.targets,
         "trunk": trunk,
@@ -1031,6 +1032,21 @@ fn talk_rows(repo: &Repo) -> Value {
     };
     crate::talk::standing::rows(&repo.git, &me.name, crate::talk::standing::reader_now())
         .map_or_else(|why| json!({"unread": why}), Value::from)
+}
+
+/// G650: the ids of the open talks in `rows` whose reply this reader owes.
+fn talks_owed(repo: &Repo, rows: &Value) -> Value {
+    let Ok(me) = crate::change::current_actor(&repo.common_dir) else {
+        return json!([]);
+    };
+    let owed: Vec<&Value> = rows
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|row| row["owes"] == me.name.as_str())
+        .map(|row| &row["talk"])
+        .collect();
+    json!(owed)
 }
 
 /// G85: the trunk commits that did not land through bay, named and counted. An unreadable

@@ -9,6 +9,10 @@
 //! case here reads the old sentence); in `owes`, the `op.is_null()` arm (the unsubmitted changes
 //! count as on the way); in `listing_say`, `no_live_runner` returning `false` (the no-runner case
 //! says nothing needs you; the unit test in `src/result.rs` holds the live-runner sentence).
+//!
+//! G650: it also counts the talks the reader owes a reply (a fleet finding, 2026-11-04: a new
+//! session found five overdue ones only by reading raw refs). Guard to mutate, in `src/status.rs`
+//! `talks_owed`: the `owes` test (the sender reads the talk as owed).
 
 // Each case runs a shell script (the check's adapter), so these run on Unix only.
 #![cfg(unix)]
@@ -21,11 +25,21 @@ use support::{TestBox, check_files, passing_result, result_json};
 
 /// A trunk whose one check fails a candidate holding `src/refused.rs`.
 fn seeded(test_box: &TestBox) -> PathBuf {
+    seeded_with(test_box, "")
+}
+
+/// [`seeded`], with `tables` added to its policy.
+fn seeded_with(test_box: &TestBox, tables: &str) -> PathBuf {
     let repo = test_box.repo_any("repo");
     let pass = passing_result(1);
     let fail = pass.replace("\\\"pass\\\"", "\\\"product_failure\\\"");
     let result = format!("if [ -e src/refused.rs ]; then {fail}; else {pass}; fi");
-    let files = check_files("true", &result, 1, 60);
+    let mut files = check_files("true", &result, 1, 60);
+    let policy = files
+        .iter_mut()
+        .find(|(path, _)| path == ".bay/policy.toml")
+        .unwrap();
+    policy.1.push_str(tables);
     test_box.seed_with_check(&repo, &[("src/a.rs", "fn a() {}\n")], &files);
     repo
 }
@@ -99,4 +113,35 @@ fn nothing_open_keeps_the_plain_sentence() {
     let repo = seeded(&test_box);
 
     assert_eq!(said(&test_box, &repo), "Done; nothing else is needed.");
+}
+
+#[test]
+fn a_talk_you_owe_is_counted_and_one_you_sent_is_not() {
+    let test_box = TestBox::new();
+    let repo = seeded_with(
+        &test_box,
+        "\n[policy]\nsigning = \"approvals\"\n\n[talk]\nenabled = true\n",
+    );
+    let (code, sent) = result_json(test_box.bay(&repo).env("BAY_ACTOR", "someone").args([
+        "talk",
+        support::AGENT,
+        "are you on it?",
+    ]));
+    assert_eq!(code, 0, "{sent}");
+
+    let owed = said(&test_box, &repo);
+    assert!(owed.contains("You owe a reply on 1 talk"), "{owed}");
+
+    let (code, read) = result_json(
+        test_box
+            .bay(&repo)
+            .env("BAY_ACTOR", "someone")
+            .arg("status"),
+    );
+    assert_eq!(code, 0, "{read}");
+    assert_eq!(
+        read["detail"]["talks_owed"],
+        serde_json::json!([]),
+        "{read}"
+    );
 }

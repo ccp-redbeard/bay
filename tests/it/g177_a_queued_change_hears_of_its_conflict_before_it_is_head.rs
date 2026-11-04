@@ -6,6 +6,14 @@
 //! every entry behind the head against the new trunk with `git merge-tree --write-tree --quiet`
 //! and noted the conflict on the operation in its chain. The second, which merges cleanly,
 //! reports none, and the third keeps its place in the queue (`DESIGN` § 6 step 2).
+//!
+//! G649: that conflict also wakes the third's author once, through `[plugin.wake]` (`cause:
+//! "outcome"`, `MERGE_CONFLICT`), so a session that left the change to the runners can repair it,
+//! and a repository's command can start one if that session has ended.
+//!
+//! Guards to mutate, in `src/publish.rs` `note_early_conflict`: drop the `early_conflict_wake` call
+//! (no request names the third). In `early_conflict_wake`: drop the held-event test, with a
+//! standing conflict noted again, and the wake repeats.
 
 // The check runs a shell script through the relay, so this runs on Unix only.
 #![cfg(unix)]
@@ -49,10 +57,24 @@ fn setup() -> Held {
         held = held.display(),
         go = go.display(),
     ));
+    let mut files = check_files(&format!("n=$({relayed})\n"), &passing_result(1), 1, 120);
+    files.push((
+        ".bay/config.toml".to_owned(),
+        "[plugin.wake]\ncommand = \"scripts/bay-wake\"\n".to_owned(),
+    ));
+    let woken = test_box.path().join("woken");
+    std::fs::create_dir_all(repo.join("scripts")).unwrap();
+    support::write_executable(
+        &repo.join("scripts/bay-wake"),
+        &format!(
+            "#!/bin/sh\ncat >> '{}'\nprintf '{{\"schema\":\"bay.wake-result/1\",\"result\":\"woken\",\"reason\":null}}'\n",
+            woken.display()
+        ),
+    );
     test_box.seed_with_check(
         &repo,
         &[("src/a.rs", "fn a() {}\n"), ("docs/keep.md", "k\n")],
-        &check_files(&format!("n=$({relayed})\n"), &passing_result(1), 1, 120),
+        &files,
     );
     test_box.clone_of(&remote, "mover");
     Held {
@@ -89,6 +111,20 @@ fn hold_place(held: &Held, view: &Path, position: u64) {
 fn operation(held: &Held, id: &str) -> serde_json::Value {
     let status = held.test_box.bay_ok(&held.repo, &["status", id]);
     status["detail"]["changes"][0]["operation"].clone()
+}
+
+/// G649: `change`'s author was woken once for its conflict, and no other author was.
+fn assert_woken_once(held: &Held, change: &str) {
+    let woken = std::fs::read_to_string(held.test_box.path().join("woken")).unwrap_or_default();
+    let conflicts: Vec<serde_json::Value> = woken
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|request| request["reason"] == "MERGE_CONFLICT")
+        .collect();
+    assert_eq!(conflicts.len(), 1, "{woken}");
+    assert_eq!(conflicts[0]["cause"], "outcome", "{woken}");
+    assert_eq!(conflicts[0]["change"], change, "{woken}");
 }
 
 #[test]
@@ -159,6 +195,7 @@ fn the_third_queued_change_sees_its_conflict_while_the_head_is_checked() {
             .is_some_and(|allowed| allowed.iter().any(|action| action == "refresh")),
         "{third_op}"
     );
+    assert_woken_once(&held, &third);
     // It keeps its place: still queued, not blocked, and its reservation is not released.
     assert_eq!(third_op["state"], "admitted", "{third_op}");
     assert_eq!(third_op["outcome"], "QUEUED", "{third_op}");

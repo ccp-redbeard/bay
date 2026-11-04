@@ -1,17 +1,7 @@
 # Changelog
 
-## 0.6.27
+## 0.6.28
 
-- A view whose first checkout stopped before git wrote its index is judged against its commit.
-- Only files that differ from that commit, or that it lacks, count as unsaved work.
-- Before, `bay start` moved the whole view aside as unsaved and made it again.
-- A change that failed the same units, for the same reasons, on two mains is not checked on a third.
-- This holds only when each failing unit names a file the change changes; a new revision is checked.
-- The refusal names those units in `detail.fails_as_before`.
-- A waiver now carries to a rebuild of its change on a newer main.
-- It carries only when the patch is the same and the check fails there the same way.
-- The merge names the waiver in `coverage_gaps`, with `carried_from`, the candidate the approver waived.
-- The checks the waived failure stopped run on the rebuild before it merges.
 - A view of an ended change kept for its work loses its ignored build output at the next `bay start`.
 - Its edits, its untracked files, loose ignored files such as `.env`, and the view itself stay.
 - `bay start` removes this clone's day-old half-written packs; before, only a runner's pass did.
@@ -26,6 +16,21 @@
 - `bay doctor` names a pre-merge check every change waits for; it is advice, never red.
 - A view holding read-only build output is now released; before, it stayed for good, unreported.
 - Releasing a view no longer unregisters another worktree whose folder is briefly absent.
+- A conflict found while a change waits in line now wakes its author once, through `[plugin.wake]`.
+- A plain `bay status` also says how many talks you owe a reply, in `detail.talks_owed`.
+
+## 0.6.27
+
+- A view whose first checkout stopped before git wrote its index is judged against its commit.
+- Only files that differ from that commit, or that it lacks, count as unsaved work.
+- Before, `bay start` moved the whole view aside as unsaved and made it again.
+- A change that failed the same units, for the same reasons, on two mains is not checked on a third.
+- This holds only when each failing unit names a file the change changes; a new revision is checked.
+- The refusal names those units in `detail.fails_as_before`.
+- A waiver now carries to a rebuild of its change on a newer main.
+- It carries only when the patch is the same and the check fails there the same way.
+- The merge names the waiver in `coverage_gaps`, with `carried_from`, the candidate the approver waived.
+- The checks the waived failure stopped run on the rebuild before it merges.
 - When one of those fails, `bay waiting` asks the approver about that check only.
 - A change refreshed with `bay start <change>` reads the waiver from the remote, so it carries too.
 - Before, every merge on main voided a waiver that its change had not yet used.

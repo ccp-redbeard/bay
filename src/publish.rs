@@ -3965,9 +3965,50 @@ pub fn note_early_conflict(
         Some(found) => format!("{op_id} conflicts with trunk {}", found.trunk),
         None => format!("{op_id} merges onto trunk again"),
     };
+    let paths = conflict.as_ref().map(|found| found.paths.clone());
     ctx.op_mut(op_id).early_conflict = conflict;
     ctx.save(&revision, None, &message)?;
-    Ok(ctx.push_chain())
+    let pushed = ctx.push_chain();
+    if pushed && let Some(paths) = paths {
+        let _ = early_conflict_wake(&ctx, op_id, &paths);
+    }
+    Ok(pushed)
+}
+
+/// G649: a conflict found while a change waits in line wakes its author once for those paths, as
+/// a block does (G307), so a session that left the change to the runners can repair it before
+/// its turn. The answer is a `wake` event on this executor's log, whose id is the operation and
+/// the paths: the same conflict never wakes twice, however often a pass notes it. Without a
+/// `[plugin.wake] command` nothing is asked and nothing is written.
+fn early_conflict_wake(ctx: &Ctx, op_id: &str, paths: &[String]) -> Result<(), String> {
+    if !crate::talk::wake::configured(ctx.repo) {
+        return Ok(());
+    }
+    let id = digest(&json!({"op_id": op_id, "outcome": "early_conflict", "paths": paths}))?;
+    let id = format!("evt_{}", &id.trim_start_matches("sha256:")[..20]);
+    crate::log::fetch(ctx.repo);
+    if crate::log::held_events(&ctx.repo.git)?.contains(&id) {
+        return Ok(());
+    }
+    let reason = Reason::MergeConflict;
+    let wake = wake_author(ctx, op_id, Decision::Blocked, Some(reason));
+    let event = json!({
+        "schema": crate::log::EVENT_SCHEMA,
+        "id": id,
+        "at": crate::clock::now_rfc3339(),
+        "kind": "wake",
+        "change": ctx.id,
+        "op_id": op_id,
+        "decision": Decision::Blocked.word(),
+        "reason": reason.code(),
+        "conflicts": paths,
+        "actor": ctx.record.actor,
+        "wake": wake,
+        "recurrence_key": format!("wake/{op_id}/early-conflict"),
+    });
+    let executor = ctx.executor_name();
+    let signer = ctx.executor_signer().ok().flatten();
+    crate::log::append(ctx.repo, &executor, signer.as_ref(), &event).map(|_| ())
 }
 
 /// The ownership claim (§ 9a): a compare-and-swap on the remote chain that raises the epoch.
