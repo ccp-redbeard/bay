@@ -14,6 +14,9 @@
 - The checks the waived failure stopped run on the rebuild before it merges.
 - A view of an ended change kept for its work loses its ignored build output at the next `bay start`.
 - Its edits, its untracked files and the view itself stay.
+- `bay start` removes this clone's day-old half-written packs; before, only a runner's pass did.
+- Below the disk floor, `bay start` frees those packs and ended views first, then measures again.
+- A `DISK_LOW` refusal names the views it released in `detail.released_views`.
 - When one of those fails, `bay waiting` asks the approver about that check only.
 - A change refreshed with `bay start <change>` reads the waiver from the remote, so it carries too.
 - Before, every merge on main voided a waiver that its change had not yet used.

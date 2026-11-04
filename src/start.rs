@@ -96,10 +96,21 @@ pub fn start(dir: &Path, request: &StartRequest) -> BayResult {
     };
     // G265 (N-13): a box below its disk floor (`bay.minFreeMiB`) starts nothing: no change and
     // no view, measured where the views are made.
-    match crate::disk::below_floor(&repo.git, &repo.views_dir()) {
+    let mut floor = crate::disk::below_floor(&repo.git, &repo.views_dir());
+    // G640: below the floor, free what bay may free first, and measure again.
+    let mut released = Vec::new();
+    if matches!(floor, Ok(Some(_))) {
+        released = reclaim(&repo, dir);
+        floor = crate::disk::below_floor(&repo.git, &repo.views_dir());
+    }
+    match floor {
         Ok(None) => {}
         Ok(Some(low)) => {
-            let mut refused = BayResult::blocked(Reason::DiskLow).with_detail(low.detail());
+            let mut detail = low.detail();
+            if !released.is_empty() {
+                detail["released_views"] = json!(released);
+            }
+            let mut refused = BayResult::blocked(Reason::DiskLow).with_detail(detail);
             refused.freshness = repo.freshness();
             return refused;
         }
@@ -129,7 +140,7 @@ pub fn start(dir: &Path, request: &StartRequest) -> BayResult {
         warm_history(&repo, &mut result);
     }
     // G97: views of ended changes past the retention window go, newer work never.
-    let released = release_ended(&repo, dir);
+    released.extend(reclaim(&repo, dir));
     if !released.is_empty()
         && let Some(detail) = result
             .detail
@@ -222,6 +233,13 @@ fn warm_history(repo: &Repo, result: &mut BayResult) {
         "history".to_owned(),
         view::warm_history(&view_path, &declared),
     );
+}
+
+/// G640: what a start frees, in a clone a runner may never visit: this clone's day-old
+/// half-written packs (G595) and the views of ended changes (G97). Returns the views released.
+fn reclaim(repo: &Repo, dir: &Path) -> Vec<String> {
+    crate::executor::sweep_tmp_packs(repo);
+    release_ended(repo, dir)
 }
 
 /// G97: before a new change, release this machine's views of ended changes past the retention

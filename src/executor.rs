@@ -968,7 +968,7 @@ const STALE_TMP_PACK: Duration = Duration::from_hours(24);
 /// it when it ends; on a failed fetch, or one stopped at its time bound by any signal, it leaves
 /// the file (measured: SIGTERM or SIGKILL, to the child or its group, each left one), and only
 /// `git prune` removes it, after two weeks. A pack a fetch writes now is newer, and is kept.
-fn sweep_tmp_packs(repo: &Repo) {
+pub(crate) fn sweep_tmp_packs(repo: &Repo) {
     let Ok(entries) = std::fs::read_dir(repo.common_dir.join("objects").join("pack")) else {
         return;
     };
