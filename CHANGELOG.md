@@ -4,8 +4,8 @@
 
 - A session resumed without `BAY_ACTOR` keeps its name, so it is never refused its own view.
 - Its hooks and its shell now agree, and it hears the talks sent to that name.
-- A change no pre-merge check covers now merges past a red main.
-- Its result names each red check it passed in `detail.passed_red`.
+- A repository can list paths that merge past a red main, in `[policy] passes_red`; it starts empty.
+- Such a change's result names each red check it passed, in `detail.passed_red`.
 - `bay merge` pushes a change no pre-merge check covers itself, in seconds, instead of waiting for a runner.
 - A machine with no disk floor set now has one of 5 GiB; `bay.minFreeMiB = 0` turns it off.
 - `bay update` on a terminal shows the step it is on and its seconds.

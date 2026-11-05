@@ -1,11 +1,14 @@
 //! G654 (owner ruling, 2026-11-05; a fleet finding: a document waited two hours behind a red check
-//! it could not worsen before anyone could read it). A change no pre-merge check covers (G403)
-//! merges past a red main, and its result names each red check it passed in `detail.passed_red`.
-//! A post check runs after the merge on a green main too, so a document's wait added a gate the
-//! policy never asked for. A change a pre-merge check covers still waits (G244).
+//! it could not worsen). A repository declares in `[policy] passes_red` the paths whose changes may
+//! merge past a red main. A change passes when every file is on that list and no pre-merge check
+//! covers it, and its result names each red check it passed in `detail.passed_red`. The list starts
+//! empty, so a red main holds everything else as before (G244). A list, because "no pre-merge check
+//! covers it" is true of code a repository checks only after the merge, which must still wait on its
+//! own red check (G577).
 //!
-//! Guard to mutate, in `src/publish.rs` `red_gate`: the `needs_no_check` test (the document
-//! waits); the `passed_red` it records (the name is missing).
+//! Guards to mutate, in `src/publish.rs` `red_gate`: the `may_pass_red` test (the unlisted document
+//! and the mixed change merge); the `needs_no_check` test (the listed file a pre-merge check covers
+//! merges); the `passed_red` it records (the name is missing).
 
 // Each case runs a shell script (the check's adapter), so these run on Unix only.
 #![cfg(unix)]
@@ -18,6 +21,10 @@ use serde_json::Value;
 use support::{TestBox, check_files, passing_result, result_json};
 
 const POST: &str = "\n[[check]]\nid = \"suite\"\nenvironment = \"local\"\nstage = \"post\"\ncommand = \"scripts/bay-check suite\"\nadapter = [\"scripts/bay-check\"]\nexpected_minimum = 1\ntimeout_s = 60\n";
+
+/// What may pass a red main: a document, and a file a pre-merge check covers, to show the list
+/// alone is not enough.
+const LIST: &str = "\n[policy]\npasses_red = [\"docs/**\", \"src/listed.rs\"]\n";
 
 /// A main whose post check `suite`, which reads every path, fails on any tree holding
 /// `src/bad.rs`, and whose pre-merge check reads only `src/`. The bad file is merged, so main is
@@ -36,6 +43,7 @@ fn red_main() -> (TestBox, PathBuf) {
         if path == ".bay/policy.toml" {
             *text = text.replacen("timeout_s", "when_paths = [\"src/**\"]\ntimeout_s", 1);
             text.push_str(POST);
+            text.push_str(LIST);
         }
     }
     files.push((
@@ -64,6 +72,7 @@ fn red_main() -> (TestBox, PathBuf) {
 fn merge(test_box: &TestBox, repo: &Path, intent: &str, paths: &str, file: &str) -> (i32, Value) {
     let started = test_box.bay_ok(repo, &["start", intent, "--paths", paths]);
     let view = PathBuf::from(started["detail"]["view"].as_str().unwrap());
+    std::fs::create_dir_all(view.join(file).parent().unwrap()).unwrap();
     std::fs::write(view.join(file), "new\n").unwrap();
     result_json(test_box.bay(&view).args(["merge", "--wait"]))
 }
@@ -91,6 +100,35 @@ fn a_change_a_pre_merge_check_covers_still_waits() {
 
     assert_eq!(code, 0, "{waiting}");
     assert_eq!(waiting["decision"], "queued", "{waiting}");
+    assert_eq!(waiting["reason"], "MAIN_RED", "{waiting}");
+}
+
+#[test]
+fn a_document_off_the_list_waits() {
+    let (test_box, repo) = red_main();
+    let (code, waiting) = merge(&test_box, &repo, "OTHER", "notes/", "notes/note.md");
+    assert_eq!(code, 0, "{waiting}");
+    assert_eq!(waiting["reason"], "MAIN_RED", "{waiting}");
+}
+
+#[test]
+fn a_change_with_one_file_off_the_list_waits() {
+    let (test_box, repo) = red_main();
+    let started = test_box.bay_ok(&repo, &["start", "MIXED", "--paths", "docs/", "notes/"]);
+    let view = PathBuf::from(started["detail"]["view"].as_str().unwrap());
+    std::fs::write(view.join("docs/note.md"), "new\n").unwrap();
+    std::fs::create_dir_all(view.join("notes")).unwrap();
+    std::fs::write(view.join("notes/note.md"), "new\n").unwrap();
+    let (code, waiting) = result_json(test_box.bay(&view).args(["merge", "--wait"]));
+    assert_eq!(code, 0, "{waiting}");
+    assert_eq!(waiting["reason"], "MAIN_RED", "{waiting}");
+}
+
+#[test]
+fn a_listed_file_a_pre_merge_check_covers_waits() {
+    let (test_box, repo) = red_main();
+    let (code, waiting) = merge(&test_box, &repo, "LISTED", "src/", "src/listed.rs");
+    assert_eq!(code, 0, "{waiting}");
     assert_eq!(waiting["reason"], "MAIN_RED", "{waiting}");
 }
 

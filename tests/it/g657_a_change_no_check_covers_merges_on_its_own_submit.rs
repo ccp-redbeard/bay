@@ -7,6 +7,8 @@
 //! Guards to mutate, in `src/publish.rs` `submit_land`: the `needs_no_check` test (the first case
 //! stays queued, or with it always true, the second merges); the `let Ok` that leaves a fault to
 //! a runner (the third fails for want of a runner key).
+//! And in `red_gate`, the read of the post records before it judges: without it, a push sees no red
+//! another machine recorded (G577 finds the change on main).
 
 // Each case runs a shell script (the check's adapter), so these run on Unix only.
 #![cfg(unix)]

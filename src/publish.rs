@@ -5118,6 +5118,11 @@ fn red_gate(
     trunk: &str,
 ) -> Result<Option<BayResult>, String> {
     ctx.step.set("red");
+    // G657: a run of its own, unlike a runner's pass, has not read the post records another
+    // machine wrote, and would merge past a red it cannot see.
+    if ctx.visit == Visit::Own {
+        ctx.repo.fetch_evidence_once(&ctx.keys);
+    }
     let git = &ctx.repo.git;
     let reds = journaled(ctx, || {
         crate::red::holding(git, trunk, ctx.registry.as_ref())
@@ -5134,10 +5139,14 @@ fn red_gate(
     if blocking.is_empty() {
         return Ok(None);
     }
-    // G654 (owner ruling, 2026-11-05): a change no pre-merge check covers passes, and its result
-    // names what it passed. A post check runs after the merge on a green main too, so waiting
-    // here would add a gate the policy never asked for.
-    if needs_no_check(git, trunk, revision)? {
+    // G654 (owner ruling, 2026-11-05): a change the repository lists in `[policy] passes_red`,
+    // that no pre-merge check covers, passes, and its result names what it passed. A list, as
+    // "no pre-merge check" is also true of code a repository checks only after the merge.
+    let listed = policy::load_at(git, trunk)
+        .ok()
+        .flatten()
+        .is_some_and(|policy| policy.may_pass_red(&changed));
+    if listed && needs_no_check(git, trunk, revision)? {
         ctx.passed_red = blocking.iter().map(|red| red.check.clone()).collect();
         return Ok(None);
     }
