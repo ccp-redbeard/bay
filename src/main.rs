@@ -462,7 +462,7 @@ struct TalkArgs {
         "target", "forecast", "commitment", "owns", "promises", "needs", "promise_evidence",
         "urgent", "dry_run", "answer", "to", "to_live", "round"])]
     backbrief: Option<String>,
-    /// With --backbrief: the outcome as you read the ask (default: the talk's own action)
+    /// With --backbrief: the outcome as you read the ask (default: the status)
     #[arg(long, requires = "backbrief")]
     outcome: Option<String>,
     /// With --backbrief: your first step (default: the status)

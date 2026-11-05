@@ -9,6 +9,8 @@
 - `bay merge` pushes a change no pre-merge check covers itself, in seconds, instead of waiting for a runner.
 - A machine with no disk floor set now has one of 5 GiB; `bay.minFreeMiB = 0` turns it off.
 - `bay update` on a terminal shows the step it is on and its seconds.
+- `bay status <change>` keeps what `UNDOES_MERGED` would undo, in `operation.undoes`.
+- `bay talk --backbrief` with no `--outcome` no longer repeats the ask as its outcome.
 - `bay status --all` now counts machines green and red; before, it could say "Done" with machines red.
 
 ## 0.6.28

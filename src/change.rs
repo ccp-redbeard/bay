@@ -447,6 +447,9 @@ pub struct Operation {
     /// place; its own merge, once it is head, still decides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub early_conflict: Option<EarlyConflict>,
+    /// G658: what this operation's `UNDOES_MERGED` refusal would have undone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undoes: Option<Undone>,
     /// NEW-2, NEW-10: the checks an executor that was not running this operation made of it
     /// while it waited behind the queue's head (`crate::throughput`), newest last, at most
     /// `throughput::PRECHECKS_KEPT`. Their records count only through reuse.
@@ -478,6 +481,16 @@ pub struct EarlyConflict {
     pub trunk: String,
     /// The conflicting paths, as the publication merge names them (`DESIGN` § 6 step 2).
     pub paths: Vec<String>,
+}
+
+/// G658: the merged work an `UNDOES_MERGED` refusal protected.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Undone {
+    pub paths: Vec<String>,
+    /// The change that merged it, where its commit names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change: Option<String>,
+    pub commit: String,
 }
 
 /// Why an operation waits for a worker, and since when (`DESIGN` § 6, § 7).

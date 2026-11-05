@@ -2115,6 +2115,9 @@ fn describe(
         if !published && !op.state.is_terminal() && op.state != crate::change::OpState::Blocked {
             waiting(op, &mut operation);
         }
+        if let Some(undoes) = &op.undoes {
+            operation["undoes"] = json!(undoes);
+        }
         if let Some(fault) = fault(record, unsynced, op, published) {
             operation["fault"] = fault;
         }

@@ -1103,7 +1103,10 @@ fn submit_land(repo: &Repo, id: &str, step: &Step, wait: bool) -> Result<BayResu
     // them waiting for a runner): a change no pre-merge check covers leaves a runner nothing to
     // check, so this command pushes it. A machine that may not write as a runner, or any fault,
     // leaves it submitted, for a runner.
+    // A test of a runner's visit to such a change asks for it to be left to the runner.
+    let left_to_a_runner = TEST_HOOKS && std::env::var_os("BAY_TEST_LEAVE_TO_RUNNER").is_some();
     if online
+        && !left_to_a_runner
         && needs_no_check(&repo.git, &trunk, &revision).unwrap_or(false)
         && let Ok(result) = execute_op(&mut ctx, &op_id, trunk.clone())
     {
@@ -4743,6 +4746,7 @@ fn submit(ctx: &mut Ctx, revision: &str) -> Result<String, String> {
         mid_publish_releases: Vec::new(),
         unavailable: None,
         early_conflict: None,
+        undoes: None,
         prechecks: Vec::new(),
         batch_culprit: None,
     });
@@ -5722,6 +5726,11 @@ fn undoes_merged(
     op.state = OpState::Blocked;
     op.outcome = Some(Reason::UndoesMerged.code().to_owned());
     op.blocked_on = Some(condition);
+    op.undoes = Some(crate::change::Undone {
+        paths: vec![path.clone()],
+        change: (!change.is_empty()).then(|| change.clone()),
+        commit: commit.clone(),
+    });
     ctx.save(revision, None, "blocked: undoes merged work")?;
     ctx.push_chain();
     Ok(Some(

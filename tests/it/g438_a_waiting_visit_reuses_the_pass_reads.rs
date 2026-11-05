@@ -64,7 +64,13 @@ fn submit(test_box: &TestBox, repo: &Path, intent: &str, path: &str) -> String {
     let started = test_box.bay_ok(repo, &["start", intent, "--paths", dir]);
     let view = PathBuf::from(started["detail"]["view"].as_str().unwrap());
     std::fs::write(view.join(path), format!("{intent}\n")).unwrap();
-    let (code, queued) = result_json(test_box.bay(&view).arg("merge"));
+    // The docs change needs no check (G657): this test watches a runner's visit to it.
+    let (code, queued) = result_json(
+        test_box
+            .bay(&view)
+            .env("BAY_TEST_LEAVE_TO_RUNNER", "1")
+            .arg("merge"),
+    );
     assert_eq!(code, 0, "{queued}");
     queued["change"].as_str().unwrap().to_owned()
 }

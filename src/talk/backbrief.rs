@@ -6,8 +6,8 @@
 //! new time its next reply is owed. bay writes it as the host's judge takes it
 //! ([`super::judge`]) and judges the same rules here first, so a backbrief under
 //! `signing = "approvals"`, where no host judges, keeps them too: only `who` writes one, and a
-//! closed talk takes none. The outcome is the talk's own `what` (the ask as written) unless
-//! `--outcome` restates it, the first step is the status word unless `--first-step` names one,
+//! closed talk takes none. The outcome and the first step are the status word unless `--outcome`
+//! and `--first-step` say more,
 //! and nothing is unclear unless `--unclear` says what is.
 //!
 //! A backbrief reports progress, so a talk takes several: the same one as the latest is
@@ -152,11 +152,8 @@ fn checked(talk: &Talk, me: &str, request: &Backbrief) -> Result<Map<String, Val
     }
     let mut fields = Map::new();
     fields.insert("status".to_owned(), json!(status));
-    let outcome = request
-        .outcome
-        .as_deref()
-        .or_else(|| talk.body["what"].as_str())
-        .unwrap_or_default();
+    // G659: never the talk's own ask, so a reply that says only a status restates nothing.
+    let outcome = request.outcome.as_deref().unwrap_or(status);
     let first_step = request.first_step.as_deref().unwrap_or(status);
     for (field, text) in [("outcome", outcome), ("first_step", first_step)] {
         let text = fold(text);
