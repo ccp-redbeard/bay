@@ -216,7 +216,72 @@ fn binary_name() -> String {
 
 #[must_use]
 pub fn update(request: &Request) -> BayResult {
-    run(request).unwrap_or_else(|refusal| *refusal)
+    let ticker = Ticker::start();
+    let result = run(request).unwrap_or_else(|refusal| *refusal);
+    drop(ticker);
+    result
+}
+
+const TEST_HOOKS: bool = option_env!("BAY_RELEASE_VERSION").is_none();
+
+/// G656: the step an update is on, which [`Ticker`] shows.
+static STEP: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// G656: the update is now on `text`. Heard only through [`Ticker`], so stdout stays one result.
+fn step(text: &str) {
+    if TEST_HOOKS && std::env::var_os("BAY_TEST_UPDATE_STEPS").is_some() {
+        eprintln!("step: {text}");
+    }
+    if let Ok(mut current) = STEP.lock() {
+        text.clone_into(&mut current);
+    }
+}
+
+/// G656 (owner, 2026-11-05: an update felt very long with nothing said): on a terminal, one line
+/// with the step and its seconds, cleared when the update ends. With no terminal, nothing.
+struct Ticker {
+    done: std::sync::mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Ticker {
+    fn start() -> Option<Self> {
+        if !std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+            return None;
+        }
+        let (done, ended) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            const FRAMES: [char; 4] = ['|', '/', '-', '\\'];
+            let began = std::time::Instant::now();
+            for frame in FRAMES.iter().cycle() {
+                let text = STEP.lock().map(|step| step.clone()).unwrap_or_default();
+                if !text.is_empty() {
+                    eprint!("\r\x1b[2K{frame} {text} ({}s)", began.elapsed().as_secs());
+                }
+                if !matches!(
+                    ended.recv_timeout(Duration::from_millis(120)),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    break;
+                }
+            }
+            eprint!("\r\x1b[2K");
+        });
+        Some(Self {
+            done,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for Ticker {
+    fn drop(&mut self) {
+        let _ = self.done.send(());
+        // The line is cleared before the result is said.
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 /// Where a box setting came from: a process's environment wins over global Git config.
@@ -380,6 +445,7 @@ fn run(request: &Request) -> Result<BayResult, Refusal> {
         }
     }
     let source = Source::current();
+    step("Looking for the newest release");
     let plan = resolve(&source, pin, request.version.clone())?;
 
     if let (Some(pin), Some(version)) = (&plan.pin, &request.version)
@@ -677,6 +743,7 @@ fn download_verified(source: &Source, plan: &Plan, tmp: &Path) -> Result<Vec<u8>
         platform().ok_or_else(|| plan.unavailable("no release build for this platform"))?;
     let archive = archive_name(&platform);
     let base = format!("{}/v{}", source.download, plan.target);
+    step(&format!("Checking the signature of bay {}", plan.target));
     let get = |name: &str| {
         let path = tmp.join(name);
         source
@@ -710,6 +777,7 @@ fn download_verified(source: &Source, plan: &Plan, tmp: &Path) -> Result<Vec<u8>
     let Some(want) = sum_of(&sums, &archive) else {
         return Err(plan.unavailable(format!("the release has no {archive}")));
     };
+    step(&format!("Downloading bay {}", plan.target));
     let bytes = read(&get(&archive).map_err(|why| plan.unavailable(why))?)?;
     if sha256(&bytes) != want {
         return Err(plan.unverified(format!("{archive} does not match the signed SHA256SUMS")));
@@ -722,6 +790,7 @@ fn download_verified(source: &Source, plan: &Plan, tmp: &Path) -> Result<Vec<u8>
 /// Windows the archive is a zip, unpacked by the system's `tar` from a file, and the running
 /// `bay.exe` moves aside first (`crate::durable::replace_program`).
 fn swap(plan: &Plan, tmp: &Path, archive: &[u8], installed: &Path) -> Result<BayResult, Refusal> {
+    step(&format!("Installing bay {}", plan.target));
     let unpacked = tmp.join("x");
     std::fs::create_dir_all(&unpacked).map_err(|error| failed(error.to_string()))?;
     let name = binary_name();
