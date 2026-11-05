@@ -4,6 +4,8 @@
 
 - A session resumed without `BAY_ACTOR` keeps its name, so it is never refused its own view.
 - Its hooks and its shell now agree, and it hears the talks sent to that name.
+- A change no pre-merge check covers now merges past a red main.
+- Its result names each red check it passed in `detail.passed_red`.
 
 ## 0.6.28
 
