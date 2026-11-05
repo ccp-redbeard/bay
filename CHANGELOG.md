@@ -7,6 +7,7 @@
 - A change no pre-merge check covers now merges past a red main.
 - Its result names each red check it passed in `detail.passed_red`.
 - A machine with no disk floor set now has one of 5 GiB; `bay.minFreeMiB = 0` turns it off.
+- `bay status --all` now counts machines green and red; before, it could say "Done" with machines red.
 
 ## 0.6.28
 

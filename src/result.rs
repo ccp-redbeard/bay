@@ -1747,10 +1747,29 @@ fn status_say(result: &BayResult) -> Option<String> {
         (None, own) => own,
     };
     let talks = talks_say(result);
-    match (changes, talks) {
+    let said = match (changes, talks) {
         (Some(changes), Some(talks)) => Some(format!("{changes} {talks}")),
         (changes, talks) => changes.or(talks),
+    };
+    match (said, fleet_say(result)) {
+        (Some(said), Some(fleet)) => Some(format!("{said} {fleet}")),
+        (said, fleet) => said.or(fleet),
     }
+}
+
+/// A fleet finding (2026-11-05: `bay status --all` read "Done; nothing else is needed." with four
+/// machines red): the sentence of the machines the map counts, which never says all is well.
+fn fleet_say(result: &BayResult) -> Option<String> {
+    let ready = result.detail.as_ref()?.get("ready")?;
+    let count = |key: &str| ready[key].as_u64().unwrap_or(0);
+    let total = count("machines");
+    let plural = if total == 1 { "" } else { "s" };
+    Some(format!(
+        "Of {total} machine{plural}, {} read green, {} red, and {} never ran the health check; `detail.machines` lists each.",
+        count("green"),
+        count("red"),
+        count("never_ran_doctor")
+    ))
 }
 
 /// G650 (a fleet finding, 2026-11-04: a new session found five overdue talks only by reading raw
@@ -2369,6 +2388,16 @@ mod tests {
     /// 0.6.3: a status read while main is red, or while a fix's run has not answered, says so,
     /// never "nothing else is needed"; a pending check no fix answers holds nothing, so it says
     /// nothing of main.
+    #[test]
+    fn a_fleet_read_counts_the_machines_and_never_says_done() {
+        let ready = json!({"machines": 15, "green": 7, "red": 4, "never_ran_doctor": 4});
+        let say = BayResult::ok(json!({"ready": ready, "red": [], "red_pending": []})).say();
+        assert_eq!(
+            say,
+            "Of 15 machines, 7 read green, 4 red, and 4 never ran the health check; `detail.machines` lists each."
+        );
+    }
+
     #[test]
     fn a_status_read_says_main_is_red_or_waits_for_a_fixs_run() {
         let read = |red: serde_json::Value, pending: serde_json::Value| {
