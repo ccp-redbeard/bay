@@ -146,7 +146,8 @@ session is being told of its refusals; `waiting_for` says what a queued change w
   again. A change that fixes it goes ahead of the line: `bay start <intent> --fixes <check>`, the check
   `detail.red[].check` names (the one name that never moves), or `--fixes` the change `detail.fixes` names. Main is then `pending_fix` in `detail.red_pending` until a run of the check on
   the fix answers it.
-- A change that no check covers, such as a document no check reads, merges in the next push, past a red main too;
+- A change that no check covers, such as a document no check reads, is on main when `bay merge` returns, unless this
+  machine has no runner key where the repository signs everything. It passes a red main too;
   `detail.passed_red` names each red check it passed. `bay start` says
   beforehand, in `detail.pre_merge`: `at_once`, and in `checks` each pre-merge check a file under your declared
   paths can wake, with that path and an example file. To stay fast, narrow your paths. `bay doctor` names a

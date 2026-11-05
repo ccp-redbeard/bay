@@ -1099,6 +1099,17 @@ fn submit_land(repo: &Repo, id: &str, step: &Step, wait: bool) -> Result<BayResu
         ctx.tell_deferred();
         return result.map(|result| with_main_changed(result, moved));
     }
+    // G657 (a fleet finding, 2026-11-05: a document reached main 45 s after its request, 40 s of
+    // them waiting for a runner): a change no pre-merge check covers leaves a runner nothing to
+    // check, so this command pushes it. A machine that may not write as a runner, or any fault,
+    // leaves it submitted, for a runner.
+    if online
+        && needs_no_check(&repo.git, &trunk, &revision).unwrap_or(false)
+        && let Ok(result) = execute_op(&mut ctx, &op_id, trunk.clone())
+    {
+        ctx.tell_deferred();
+        return Ok(with_main_changed(result, moved));
+    }
     let op = ctx.op(&op_id);
     let mut result = BayResult::new(Decision::Queued)
         .with_change(id)
