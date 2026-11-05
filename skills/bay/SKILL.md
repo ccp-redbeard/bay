@@ -29,6 +29,7 @@ Docs: https://getbay.io/docs (each page also reads as markdown: add `.md` to its
 | When | Run |
 | --- | --- |
 | Open one change, or a follow-up after the intent's change merged | `bay start <intent> --paths <paths> [--input <kind>:<name>]` |
+| Ask what a change to some paths would meet, the checks and the live changes on them, starting nothing | `bay start <intent> --paths <paths> --dry-run` |
 | Work | Edit only inside the view that `bay start` prints. |
 | Submit the change | `bay merge` (returns at once; a runner checks and merges it) |
 | Wait for the outcome here | `bay merge --wait` (`--wait=<seconds>`: watch that long, then return; the run goes on) |

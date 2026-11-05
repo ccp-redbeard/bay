@@ -66,8 +66,10 @@ use support::TestBox;
 /// - 0.6.21, one flag (`status --deadline`, G619): at a high load a status read waited for its
 ///   sweep of the remote (about 34 s), and every seat's `bay status` timed out by its caller; now
 ///   it answers by its deadline from the store and names how old that is.
+/// - 0.6.29, one flag (`start --dry-run`, G662): to learn whether a check would hold some paths,
+///   an agent opened a change or read the policy by hand; now it asks, and nothing is written.
 const COMMANDS: usize = 30;
-const FLAGS: usize = 92;
+const FLAGS: usize = 93;
 /// - 0.3.3, one reason (`REGISTRY_UNREADABLE`): a registry no version rule allows made every
 ///   command fail with a raw error; doctor now names it and the repair.
 /// - 0.4.0, one reason (`LOCK_NOT_HELD`, BACKLOG 57): an edit of a file that never merges,

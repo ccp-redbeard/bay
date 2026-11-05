@@ -13,6 +13,7 @@
 - `bay talk --backbrief` with no `--outcome` no longer repeats the ask as its outcome.
 - A change a red main holds hears which of its files hold it, in `operation.red_holds`.
 - A talk to a name no record holds says so in its sentence, not only in its detail.
+- `bay start --dry-run` says which checks and live changes some paths would meet, and writes nothing.
 - `bay status --all` now counts machines green and red; before, it could say "Done" with machines red.
 
 ## 0.6.28

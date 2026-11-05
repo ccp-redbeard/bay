@@ -1555,7 +1555,8 @@ impl BayResult {
                 ),
                 _ => "Saved. bay checks it and adds it to main next.".to_owned(),
             },
-            Decision::Ok => queue_say(self)
+            Decision::Ok => preview_say(self)
+                .or_else(|| queue_say(self))
                 .or_else(|| change_say(self))
                 .or_else(|| status_say(self))
                 .or_else(|| waiting_say(self))
@@ -1755,6 +1756,35 @@ fn status_say(result: &BayResult) -> Option<String> {
         (Some(said), Some(fleet)) => Some(format!("{said} {fleet}")),
         (said, fleet) => said.or(fleet),
     }
+}
+
+/// G662: the sentence of `bay start --dry-run`.
+fn preview_say(result: &BayResult) -> Option<String> {
+    let detail = result.detail.as_ref()?;
+    detail.get("paths")?;
+    (detail.get("dry_run")? == &Value::Bool(true)).then_some(())?;
+    let checks: Vec<&str> = detail["pre_merge"]["checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["check"].as_str())
+        .collect();
+    let waits = if !checks.is_empty() {
+        format!("a change to these paths waits for {}", checks.join(", "))
+    } else if detail["pre_merge"]["at_once"] == false {
+        "a change to these paths may still wait".to_owned()
+    } else {
+        "no check holds a change to these paths".to_owned()
+    };
+    let live = detail["overlaps"].as_array().map_or(0, Vec::len);
+    let beside = match live {
+        0 => String::new(),
+        1 => " 1 live change declares the same paths; `detail.overlaps` names it.".to_owned(),
+        count => {
+            format!(" {count} live changes declare the same paths; `detail.overlaps` names them.")
+        }
+    };
+    Some(format!("Nothing was started: {waits}.{beside}"))
 }
 
 /// A fleet finding (2026-11-05: `bay status --all` read "Done; nothing else is needed." with four

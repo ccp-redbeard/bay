@@ -214,14 +214,53 @@ fn list_overlaps(repo: &Repo, record: &Result<ChangeRecord, String>, result: &mu
 /// policy or another change. A repository with no checks, a lane and an unreadable policy say
 /// nothing. The merge itself judges the files the change really holds.
 fn say_pre_merge(repo: &Repo, record: &ChangeRecord, result: &mut BayResult) {
-    let main = repo.trunk_tracking_ref();
-    let Ok(Some(policy)) = crate::policy::load_at(&repo.git, &main) else {
-        return;
-    };
-    if record.lane.is_some() || policy.unchecked || policy.checks.is_empty() {
+    if record.lane.is_some() {
         return;
     }
-    let declared: Vec<crate::policy::DeclaredPath> = inputs::paths(&record.declared_inputs)
+    let Some(said) = pre_merge(repo, inputs::paths(&record.declared_inputs), &record.after) else {
+        return;
+    };
+    if let Some(detail) = result.detail.as_mut().and_then(Value::as_object_mut) {
+        detail.insert("pre_merge".to_owned(), said);
+    }
+}
+
+/// G662: `bay start <intent> --paths <paths> --dry-run`: what a change to `paths` would meet, read
+/// from main's policy and the live changes, with nothing written.
+#[must_use]
+pub fn preview(dir: &Path, paths: &[String]) -> BayResult {
+    let repo = match Repo::open_fetched(dir) {
+        Ok(repo) => repo,
+        Err(error) => return error.into_result(),
+    };
+    if let Err(error) = repo.fetch_trunk() {
+        return BayResult::failed(error.message());
+    }
+    let mut detail = serde_json::Map::new();
+    detail.insert("dry_run".to_owned(), json!(true));
+    detail.insert("paths".to_owned(), json!(paths));
+    if let Some(said) = pre_merge(&repo, paths.to_vec(), &[]) {
+        detail.insert("pre_merge".to_owned(), said);
+    }
+    let (key, value) = match crate::overlap::overlaps(&repo, "", paths) {
+        Ok(overlaps) => ("overlaps", json!(overlaps)),
+        Err(why) => ("overlaps_unread", json!(why)),
+    };
+    detail.insert(key.to_owned(), value);
+    let mut result = BayResult::ok(Value::Object(detail));
+    result.freshness = repo.freshness();
+    result
+}
+
+/// G641: `{"at_once", "checks"}` for a change declaring `paths` after the changes `after`; `None`
+/// where a repository has no checks or its policy cannot be read.
+fn pre_merge(repo: &Repo, paths: Vec<String>, after: &[String]) -> Option<Value> {
+    let main = repo.trunk_tracking_ref();
+    let policy = crate::policy::load_at(&repo.git, &main).ok().flatten()?;
+    if policy.unchecked || policy.checks.is_empty() {
+        return None;
+    }
+    let declared: Vec<crate::policy::DeclaredPath> = paths
         .into_iter()
         .map(|path| {
             let is_file = !path.ends_with('/')
@@ -241,13 +280,8 @@ fn say_pre_merge(repo: &Repo, record: &ChangeRecord, result: &mut BayResult) {
         })
         .collect();
     let holds_policy = declared.is_empty() || declared.iter().any(|path| policy.holds_policy(path));
-    let at_once = checks.is_empty() && !holds_policy && record.after.is_empty();
-    if let Some(detail) = result.detail.as_mut().and_then(Value::as_object_mut) {
-        detail.insert(
-            "pre_merge".to_owned(),
-            json!({"at_once": at_once, "checks": checks}),
-        );
-    }
+    let at_once = checks.is_empty() && !holds_policy && after.is_empty();
+    Some(json!({"at_once": at_once, "checks": checks}))
 }
 
 /// G175: with `[view] warm_history`, a start that made or kept a view fetches the history of

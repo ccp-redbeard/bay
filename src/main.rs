@@ -43,6 +43,10 @@ enum Command {
         /// change (after a merge, plain start already does)
         #[arg(long)]
         new: bool,
+        /// Say what a change to these paths would meet, the checks and the live changes on them,
+        /// and start nothing
+        #[arg(long, requires = "paths", conflicts_with_all = ["new", "fixes", "lane", "from", "after", "adopt"])]
+        dry_run: bool,
         /// The merged change this one fixes, or the post check of main's policy it fixes (a
         /// red's one name that never moves); its merge carries a Fixes: trailer
         #[arg(long, value_name = "CHANGE|CHECK")]
@@ -862,6 +866,7 @@ fn start_change(dir: &std::path::Path, command: Command) -> BayResult {
         intent,
         paths,
         inputs,
+        dry_run,
         new,
         fixes,
         lane,
@@ -872,6 +877,9 @@ fn start_change(dir: &std::path::Path, command: Command) -> BayResult {
     else {
         unreachable!("start_change takes a start command");
     };
+    if dry_run {
+        return bay::start::preview(dir, &bay::start::declared_paths(paths));
+    }
     bay::start::start(
         dir,
         &bay::start::StartRequest {
