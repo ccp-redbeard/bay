@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.29
+
+- A session resumed without `BAY_ACTOR` keeps its name, so it is never refused its own view.
+- Its hooks and its shell now agree, and it hears the talks sent to that name.
+
 ## 0.6.28
 
 - A checkout behind main is no longer told its hooks are missing when main holds them.

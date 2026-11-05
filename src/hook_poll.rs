@@ -80,6 +80,10 @@ pub fn start(dir: &Path, event: &str, questions: &[String]) {
         return;
     };
     let mut cmd = Command::new(bay);
+    // G653: the poll accepts the talks of this session's actor, whatever names it here.
+    if crate::change::actor_source() == crate::change::ActorSource::Env {
+        cmd.env("BAY_ACTOR", crate::change::actor_name());
+    }
     cmd.arg("-C")
         .arg(dir)
         .args(&args)

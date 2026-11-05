@@ -150,6 +150,8 @@ session is being told of its refusals; `waiting_for` says what a queued change w
   check every change waits for (`pre_merge`).
 - A session that starts outside a view hears who it acts as and to run `bay status` first. Do that before
   you read refs or logs by hand.
+- A session keeps the name it started with when it is resumed, even with no `BAY_ACTOR`. A resume that sets
+  `BAY_ACTOR` to another name changes it.
 - A plain `bay status` says in `say` who owes the next step of your open changes, and names those that need a
   fix or a person's yes, and the talks you owe a reply (`detail.talks_owed`). "Nothing needs you" means bay is
   moving the rest. Read talks this way, never from their refs.

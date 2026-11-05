@@ -394,6 +394,9 @@ fn dispatch_as(product: Product, caller: &str, event: &str, input: &str, dir: &P
     let mut recorded = crate::session::Recorded::default();
     let mut product_event = Event::Unprobed;
     let parsed = Payload::parse(product, event, input, dir);
+    if let Some(session) = parsed.as_ref().and_then(|payload| payload.session.as_ref()) {
+        crate::session::act_as_kept(session);
+    }
     // BACKLOG 66 C: every hook names its session against the agent's process, so the agent's
     // own bay commands find it with no `BAY_SESSION` (`crate::agent_pid`).
     if let Some(session) = parsed.as_ref().and_then(|payload| payload.session.as_ref())

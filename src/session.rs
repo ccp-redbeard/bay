@@ -55,6 +55,74 @@ impl SessionId {
     }
 }
 
+/// How long a session's kept name outlives its last start. Its env file still holds the name, so
+/// a start after this reads it back ([`kept_actor`]).
+const KEPT_ACTOR_DAYS: u64 = 30;
+
+/// G653: the file of the name session `session` was given, on this box: a session is not bound
+/// to one repository.
+fn actor_file(session: &SessionId) -> Option<PathBuf> {
+    Some(
+        crate::update::state_dir()?
+            .join("session-actors")
+            .join(session.as_str()),
+    )
+}
+
+/// G653: keeps the name the environment gave `session`, for its later hooks, and drops the names
+/// of sessions long gone. Best effort: with none kept, a hook reads as it did before.
+fn keep_actor(session: &SessionId, actor: &str) {
+    let Some(file) = actor_file(session) else {
+        return;
+    };
+    let Some(dir) = file.parent() else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(&file, actor);
+    let limit = std::time::Duration::from_secs(KEPT_ACTOR_DAYS * 24 * 3600);
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|at| at.elapsed().ok())
+            .is_some_and(|age| age > limit);
+        if old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// G653: the name kept for `session`, else, at a start, the newest one bay wrote to the session's
+/// env file ([`bind_env`]), which holds the name of a session older than the kept name.
+fn kept_actor(session: &SessionId) -> Option<String> {
+    let kept = actor_file(session).and_then(|file| std::fs::read_to_string(file).ok());
+    let name = kept.or_else(|| {
+        let file = std::env::var_os("CLAUDE_ENV_FILE")?;
+        let text = std::fs::read_to_string(file).ok()?;
+        text.lines().rev().find_map(|line| {
+            let name = line
+                .strip_prefix("export BAY_ACTOR='")?
+                .strip_suffix('\'')?;
+            (!name.contains('\'')).then(|| name.to_owned())
+        })
+    })?;
+    (!name.is_empty() && !name.chars().any(char::is_control)).then_some(name)
+}
+
+/// G653 (a fleet finding, 2026-11-05: a session resumed with no `BAY_ACTOR` was refused its own
+/// view): a session has one name. A hook whose process names no actor acts as the name its
+/// session was given, as the session's shell does through the env file.
+pub fn act_as_kept(session: &SessionId) {
+    if crate::change::actor_source() == crate::change::ActorSource::Env {
+        return;
+    }
+    if let Some(name) = kept_actor(session) {
+        crate::change::act_for_session(name);
+    }
+}
+
 /// Ruling R2: where the product hands `SessionStart` a `CLAUDE_ENV_FILE` (Claude Code sources it
 /// before each shell command of the session), bay appends `BAY_SESSION` and `BAY_ACTOR` to it,
 /// so the session's own bay commands act as this session, and marks the link `bound` in the
@@ -74,6 +142,7 @@ fn bind_env(state_dir: &Path, session: &SessionId) {
     let mut text = format!("export BAY_SESSION={}\n", quote(session.as_str()));
     if crate::change::actor_source() == crate::change::ActorSource::Env {
         let _ = writeln!(text, "export BAY_ACTOR={}", quote(&actor));
+        keep_actor(session, &actor);
     }
     let appended = std::fs::OpenOptions::new()
         .create(true)

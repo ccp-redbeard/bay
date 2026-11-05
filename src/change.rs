@@ -172,11 +172,22 @@ pub fn actor_source() -> ActorSource {
     named_actor().1
 }
 
+/// G653: the name the environment gave this process's session, for a hook whose own process has
+/// none (`crate::session::act_as_kept`).
+static SESSION_ACTOR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// G653: this process acts for a session the environment named `name`.
+pub fn act_for_session(name: String) {
+    let _ = SESSION_ACTOR.set(name);
+}
+
 /// The actor's name and its source. An empty variable names no one.
 fn named_actor() -> (String, ActorSource) {
     let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
     if let Some(name) = var("BAY_ACTOR") {
         (name, ActorSource::Env)
+    } else if let Some(name) = SESSION_ACTOR.get() {
+        (name.clone(), ActorSource::Env)
     } else if let Some(name) = var("USER") {
         (name, ActorSource::UserDefault)
     } else {
