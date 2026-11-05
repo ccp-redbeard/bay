@@ -23,7 +23,8 @@ pub const UNSANDBOXED_CHOICE: &str = "[bay]\n\trunnerSandbox = none\n";
 /// The box's global Git config: [`UNSANDBOXED_CHOICE`], and the producer name `local` every
 /// clone of the box writes evidence under, as an operator names one (G297 clears it to see a
 /// clone take its own).
-pub const BOX_CONFIG: &str = "[bay]\n\trunnerSandbox = none\n\tproducerName = local\n";
+pub const BOX_CONFIG: &str =
+    "[bay]\n\trunnerSandbox = none\n\tproducerName = local\n\tminFreeMiB = 0\n";
 
 /// The config a new work repository starts with.
 pub const MINIMAL_CONFIG: &str = "main = \"main\"\n";

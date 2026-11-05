@@ -6,6 +6,7 @@
 - Its hooks and its shell now agree, and it hears the talks sent to that name.
 - A change no pre-merge check covers now merges past a red main.
 - Its result names each red check it passed in `detail.passed_red`.
+- A machine with no disk floor set now has one of 5 GiB; `bay.minFreeMiB = 0` turns it off.
 
 ## 0.6.28
 

@@ -1,8 +1,8 @@
-//! The box's disk floor (G265): Git config `bay.minFreeMiB`, global or for one clone. When it
-//! is set, `bay start` makes no view and check materialization writes no tree while the free
+//! The box's disk floor (G265): Git config `bay.minFreeMiB`, global or for one clone, and
+//! [`DEFAULT_FLOOR_MIB`] when neither sets it (G655). `bay start` makes no view and check materialization writes no tree while the free
 //! space of the filesystem it would write to is below the floor: both refuse `DISK_LOW`,
 //! naming the free space, the floor and the path. A box setting, never a repository one: a
-//! repository never declares how full a box's disk may get. Unset, nothing is refused.
+//! repository never declares how full a box's disk may get. `0` turns it off.
 //!
 //! Free space is what `df -P` reports as available to this user, in 1024-byte blocks. On
 //! Windows the floor is not judged.
@@ -15,6 +15,12 @@ use crate::git::Git;
 
 /// The box's floor of free space, in mebibytes.
 pub const FLOOR_KEY: &str = "bay.minFreeMiB";
+
+/// G655 (owner ruling, 2026-11-05): the floor of a box that set none: 5 GiB, little enough that a
+/// small machine meets it only when nearly full.
+pub const DEFAULT_FLOOR_MIB: u64 = 5120;
+
+const TEST_HOOKS: bool = option_env!("BAY_RELEASE_VERSION").is_none();
 
 /// A filesystem below the box's floor.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,36 +56,34 @@ impl Low {
     }
 }
 
-/// The box's floor as `git` reads it (global, or the clone's own config). Unset is `None`.
+/// The box's floor as `git` reads it (global, or the clone's own config). Unset is
+/// [`DEFAULT_FLOOR_MIB`].
 ///
 /// # Errors
 ///
 /// A value that is not a whole number of mebibytes, or a `git config` that fails: a floor that
 /// cannot be read is never no floor.
-pub fn floor(git: &Git) -> Result<Option<u64>, String> {
+pub fn floor(git: &Git) -> Result<u64, String> {
     let value = git
         .config_get(FLOOR_KEY)
         .map_err(|error| format!("{FLOOR_KEY} could not be read: {}", error.message()))?;
     let Some(value) = value else {
-        return Ok(None);
+        return Ok(DEFAULT_FLOOR_MIB);
     };
     let value = value.trim();
     value
         .parse()
-        .map(Some)
         .map_err(|_| format!("{FLOOR_KEY} = \"{value}\" is not a whole number of MiB"))
 }
 
 /// Whether the filesystem that holds `path` (or, when `path` does not exist yet, its nearest
-/// existing ancestor) is below the box's floor. No floor, or Windows, is never low.
+/// existing ancestor) is below the box's floor. A floor of 0, or Windows, is never low.
 ///
 /// # Errors
 ///
 /// The floor cannot be read, or the free space cannot be measured.
 pub fn below_floor(git: &Git, path: &Path) -> Result<Option<Low>, String> {
-    let Some(floor_mib) = floor(git)? else {
-        return Ok(None);
-    };
+    let floor_mib = floor(git)?;
     if cfg!(windows) {
         return Ok(None);
     }
@@ -101,6 +105,14 @@ fn existing(path: &Path) -> PathBuf {
 
 /// The space available to this user on the filesystem holding `path`, in whole mebibytes.
 fn free_mib(path: &Path) -> Result<u64, String> {
+    // A test build reads a disk of any size: no test can fill the machine's.
+    if TEST_HOOKS
+        && let Some(free) = std::env::var("BAY_TEST_FREE_MIB")
+            .ok()
+            .and_then(|free| free.parse().ok())
+    {
+        return Ok(free);
+    }
     let mut cmd = std::process::Command::new("df");
     cmd.arg("-Pk").arg(path);
     let output = crate::git::run_bounded(cmd, "df -Pk").map_err(|error| {

@@ -139,6 +139,8 @@ session is being told of its refusals; `waiting_for` says what a queued change w
   The agent hook also tells your session once.
 - A `merged_on_your_paths` notice: another change merged on paths you declared. Refresh, re-read
   the named paths, then go on.
+- `DISK_LOW`: the disk is below this machine's floor, 5 GiB unless `git config bay.minFreeMiB` sets another; `0` turns
+  it off. `bay start` already freed what it could, and `detail.released_views` names those views. Free more, then start again.
 - `MAIN_RED` with `waiting_for: main`: main is broken on your paths. Your change keeps waiting in its place
   in line and is checked again once main is green, before the changes that came after it; do not merge it
   again. A change that fixes it goes ahead of the line: `bay start <intent> --fixes <check>`, the check
