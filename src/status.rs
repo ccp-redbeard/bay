@@ -1969,6 +1969,18 @@ pub fn approval_pending(
     Ok(Some(approval))
 }
 
+/// G658, G661: what a refused or waiting operation's files met: the work it would undo, and which
+/// of them a red main holds.
+fn held_by(op: &crate::change::Operation, published: bool, operation: &mut Value) {
+    if let Some(undoes) = &op.undoes {
+        operation["undoes"] = json!(undoes);
+    }
+    if !published && op.outcome.as_deref() == Some(Reason::TrunkRed.code()) {
+        operation["red_holds"] = json!(op.red_holds);
+        operation["red_frees"] = json!(op.red_frees);
+    }
+}
+
 /// What an operation under way waits on, besides its place: § 7, a worker for the
 /// environments no worker answered for; G177, a conflict with trunk the executor found while
 /// the operation waits behind the queue's head, as `MERGE_CONFLICT` with its paths, so its
@@ -2115,13 +2127,7 @@ fn describe(
         if !published && !op.state.is_terminal() && op.state != crate::change::OpState::Blocked {
             waiting(op, &mut operation);
         }
-        if let Some(undoes) = &op.undoes {
-            operation["undoes"] = json!(undoes);
-        }
-        if !published && op.outcome.as_deref() == Some(Reason::TrunkRed.code()) {
-            operation["red_holds"] = json!(op.red_holds);
-            operation["red_frees"] = json!(op.red_frees);
-        }
+        held_by(op, published, &mut operation);
         if let Some(fault) = fault(record, unsynced, op, published) {
             operation["fault"] = fault;
         }
