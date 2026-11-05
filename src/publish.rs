@@ -4747,6 +4747,8 @@ fn submit(ctx: &mut Ctx, revision: &str) -> Result<String, String> {
         unavailable: None,
         early_conflict: None,
         undoes: None,
+        red_holds: Vec::new(),
+        red_frees: Vec::new(),
         prechecks: Vec::new(),
         batch_culprit: None,
     });
@@ -5144,6 +5146,15 @@ fn red_gate(
     // one name a fix gives, stable while the red stands.
     let fixes: Vec<Option<String>> = blocking.iter().map(|red| red.fixes().cloned()).collect();
     let red: Vec<serde_json::Value> = blocking.iter().map(|red| red.to_json()).collect();
+    // G661: which of its own files hold it, so a mixed change knows what to split out.
+    let (holds, frees): (Vec<String>, Vec<String>) = changed.iter().cloned().partition(|path| {
+        blocking
+            .iter()
+            .any(|red| red.covers(std::slice::from_ref(path)))
+    });
+    let op = ctx.op_mut(op_id);
+    op.red_holds.clone_from(&holds);
+    op.red_frees.clone_from(&frees);
     // The trust-agents ruling (2026-10-26): a change on a red main's paths waits, the line and
     // a fix behind it move, and it is checked again by itself once main is green; it is never
     // blocked into a re-merge by hand. BACKLOG 119: it waits in its place in line.
@@ -5168,6 +5179,8 @@ fn red_gate(
                 ],
                 "owners": owners,
                 "fixes": fixes,
+                "red_holds": holds,
+                "red_frees": frees,
             })),
     ))
 }

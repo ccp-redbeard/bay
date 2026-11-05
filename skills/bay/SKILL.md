@@ -145,7 +145,8 @@ session is being told of its refusals; `waiting_for` says what a queued change w
   it off. `bay start` already freed what it could, and `detail.released_views` names those views. Free more, then start again.
 - `MAIN_RED` with `waiting_for: main`: main is broken on your paths. Your change keeps waiting in its place
   in line and is checked again once main is green, before the changes that came after it; do not merge it
-  again. A change that fixes it goes ahead of the line: `bay start <intent> --fixes <check>`, the check
+  again. `bay status <change>` names the files that hold it in `operation.red_holds` and the rest in
+  `operation.red_frees`, which you can split into a change of their own. A change that fixes it goes ahead of the line: `bay start <intent> --fixes <check>`, the check
   `detail.red[].check` names (the one name that never moves), or `--fixes` the change `detail.fixes` names. Main is then `pending_fix` in `detail.red_pending` until a run of the check on
   the fix answers it.
 - A change that no check covers, such as a document no check reads, is on main when `bay merge` returns, unless this

@@ -2116,6 +2116,10 @@ fn talk_say(result: &BayResult) -> Option<String> {
         .and_then(crate::clock::unix_of)
         .map(crate::clock::rfc3339_of);
     Some(match (result.state.as_deref()?, by) {
+        // G660: a name no record here holds may reach no one.
+        ("sent", _) if detail.get("unseen").is_some() => {
+            format!("Sent to {who}, but no record here names {who}: check the name.")
+        }
         ("sent", Some(by)) => format!("Sent to {who}; {who} owes a reply by {by}."),
         ("sent", None) => format!("Sent to {who}; {who} owes a reply."),
         ("already_sent", Some(by)) => {

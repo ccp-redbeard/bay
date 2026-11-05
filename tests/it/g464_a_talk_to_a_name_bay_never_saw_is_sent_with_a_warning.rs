@@ -83,3 +83,28 @@ fn a_name_no_record_names_is_sent_and_warned() {
     assert_eq!(code, 0, "{decides}");
     assert_eq!(unseen(&decides), json!(["agent-x"]), "{decides}");
 }
+
+/// G660 (a fleet finding, 2026-11-05: two talks went to names nobody reads, and the sentence an
+/// agent reads said only "Sent"). The sentence says it too. Guard to mutate, in `src/result.rs`
+/// `talk_say`: the `unseen` it reads.
+#[test]
+fn the_sentence_says_so_too() {
+    let case = Plain::approvals();
+    let follow_up = from_now(3600);
+    let (code, sent) = case.talk(
+        "agent",
+        &[
+            "nobody-reads-this",
+            "Pick the wire format",
+            "--kind",
+            "discovery",
+            "--decision",
+            "wire",
+            "--follow-up",
+            &follow_up,
+        ],
+    );
+    assert_eq!(code, 0, "{sent}");
+    let say = sent["say"].as_str().unwrap();
+    assert!(say.contains("check the name"), "{sent}");
+}
