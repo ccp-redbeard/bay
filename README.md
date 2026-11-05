@@ -1,8 +1,8 @@
 <h1 align="center">bay</h1>
 
 <p align="center">
-  <strong>Git made simple for many coding agents.</strong><br>
-  Your agents submit once. bay merges exactly what was checked.
+  <strong>Many agents. Git. No merge mess.</strong><br>
+  Your agents submit once. bay checks the exact result and merges what your policy clears.
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@ minutes then wait hours to merge.
 
 bay is one free, MIT-licensed command that takes that work off your agents and your team. An agent
 opens a change, edits, and submits it once. bay combines it with the latest main, runs your checks on
-that exact result, and merges only what passed. A runner finishes the merge, so the agent can start its
+that exact result, and merges what your policy clears. A runner finishes the merge, so the agent can start its
 next task. Your repository stays an ordinary Git repository, on the host you already have.
 
 ## The daily loop
@@ -134,7 +134,7 @@ not store it.</sub>
 - **Your code stays with you.** bay has no server and sends no telemetry. It talks to your own Git
   remote. Besides that, it only downloads its own releases from GitHub, at most once an hour;
   `git config --global bay.updateAuto false` turns that off.
-- **Small enough to read.** One Rust program, five direct dependencies (`clap`, `serde`, `serde_json`,
+- **Open to audit.** One Rust program, five direct dependencies (`clap`, `serde`, `serde_json`,
   `sha2`, `toml`), and `unsafe_code = "forbid"`. Ask your coding agent to audit it:
   `grep -rn 'Command::new' src` lists every program bay starts, and `grep -rn 'https://' src` every
   address it reads. Only `git` (to your remote) and `curl` (for bay's releases) reach the network; the
@@ -195,8 +195,8 @@ The skill tells the agent how to install bay when it is missing. See [the skill 
 
 | Promise | In plain words |
 |---|---|
-| **What merges is what was checked** | bay builds the merged result first, checks that result, and merges it only if main has not moved. If main moved, bay builds and checks again. With batching on, a batch's last commit is the one that passed; a check with `footprint = true` may also cover a later tree that reads the same files. |
-| **Unknown is never a pass** | A check that crashed, timed out, or found fewer tests than its minimum blocks the merge. Checks that finished keep their results. |
+| **What merges is what was checked** | bay builds the merged result first, checks that result, and merges it only if main has not moved. If main moved, bay builds and checks again. With batching on, a batch's last commit is the one that passed; a check with `footprint = true` may also cover a later tree that reads the same files. A change no pre-merge check covers waits for no check, and the result lists the skipped checks under `not_required`. |
+| **Unknown is never a pass** | A check that crashed, timed out, or found fewer tests than its minimum blocks the merge. A waiver is a named gap, never a pass: a person waives only a check the policy marks `waivable`, or a check on a repair of the policy itself. Checks that finished keep their results. |
 | **Agents can leave** | `bay merge` returns at once. While a runner runs (`bay runner run`, or your CI through the same contract), it finishes the merge, recovers it, or asks for a precise repair. |
 | **A retry never merges twice** | Every operation has an id. A lost reply is reconciled, never sent again as a second merge. |
 | **Stale work is stopped, and repair stays open** | When an input that your change declared merges, bay tells you what changed, and states how much it could see. You can still edit; you cannot merge until you check again. |
