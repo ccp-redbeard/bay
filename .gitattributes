@@ -1,0 +1,3 @@
+# Every checkout holds the bytes Git holds, on every platform: golden outputs, embedded
+# assets and scripts compare and run byte for byte.
+* text=auto eol=lf

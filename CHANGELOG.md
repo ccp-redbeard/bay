@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.30
+
+- On Windows, bay makes change ids without `/dev/urandom`, so `bay start` and `bay merge` work there.
+- A policy's check `path` entries are judged alike on every platform; Windows no longer calls them invalid.
+
 ## 0.6.29
 
 - A session resumed without `BAY_ACTOR` keeps its name, so it is never refused its own view.

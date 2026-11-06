@@ -345,7 +345,8 @@ fn install_in(dir: &Path, request: &Request) -> Result<BayResult, String> {
     Ok(result)
 }
 
-#[cfg(test)]
+// launchd and systemd services, with their Unix paths, exist on Unix only.
+#[cfg(all(test, unix))]
 mod tests {
     use super::{Kind, load_command, name_for, service, systemd_word};
     use std::path::Path;

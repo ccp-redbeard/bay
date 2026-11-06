@@ -2843,7 +2843,9 @@ mod tests {
     }
 
     /// G285: a box read path is absolute, or `~/` under HOME; anything else is refused by name,
-    /// and one that would show a hidden path (the repository, a key) is refused too.
+    /// and one that would show a hidden path (the repository, a key) is refused too. Read paths
+    /// open the check sandbox, which Windows has none of, and the paths here are Unix ones.
+    #[cfg(unix)]
     #[test]
     fn a_box_read_path_is_absolute_and_never_overlaps_a_hidden_path() {
         use std::path::{Path, PathBuf};

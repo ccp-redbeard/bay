@@ -346,6 +346,11 @@ fn sizes(
 struct Store;
 
 #[cfg(not(unix))]
+#[allow(
+    clippy::unnecessary_wraps,
+    clippy::unused_self,
+    reason = "the Unix store's signatures, so one caller serves both"
+)]
 impl Store {
     fn open(_: &Git) -> Option<Self> {
         None

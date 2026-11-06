@@ -102,12 +102,13 @@ pub fn send(cmd: Command, input: &[u8], timeout: Duration) -> Sent {
 }
 
 /// [`send`], delivered or not, as the unit tests read it.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn deliver(cmd: Command, input: &[u8], timeout: Duration) -> bool {
     send(cmd, input, timeout).delivery(timeout) == Delivery::Delivered
 }
 
-#[cfg(test)]
+// The tests start `sh -c` scripts and signal processes by pid, so they run on Unix only.
+#[cfg(all(test, unix))]
 mod tests {
     use super::deliver;
     use std::process::{Command, Stdio};

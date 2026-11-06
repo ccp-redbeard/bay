@@ -6,7 +6,6 @@
 //! base, of every path in its `adapter` list.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -2154,7 +2153,9 @@ fn validate_environment(entry: &CheckEntry) -> Result<(), String> {
     if let Some(relative) = entry
         .path
         .iter()
-        .find(|dir| !Path::new(dir.as_str()).is_absolute() || dir.contains(':'))
+        // A leading `/`, not the reading platform's idea of absolute: one policy at the base
+        // judges every box alike, and on Windows `/usr/bin` has no drive, so is not absolute.
+        .find(|dir| !dir.starts_with('/') || dir.contains(':'))
     {
         return Err(format!(
             "check {} has the path entry {relative}; path takes absolute directories, each without ':'",
