@@ -9,6 +9,7 @@
 - On Windows, a check runs under the `PATH` its policy names; `/usr/bin` there also finds Git.
 - On Windows, bay can move folders aside, so `bay start` keeps a view's unsaved work.
 - On Windows, the disk floor is measured with Git for Windows' `df`.
+- On Windows, a check's observed reads are recorded, so its result is reused.
 - On Windows, `bay install` removes the binary it replaced when nothing still runs it.
 - bay's background work on Windows no longer flashes console windows.
 

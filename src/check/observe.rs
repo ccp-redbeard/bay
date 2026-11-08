@@ -6,13 +6,15 @@
 //! [`BACK`] in the past, so any read lands strictly after them, whatever the kernel's
 //! timestamp granularity. Under `relatime`, the Linux default, the first read of a file whose
 //! access time is not after its write time moves its access time, and a directory listing does
-//! the same for the directory. After the run, [`collect`] names every entry whose access or
-//! write time moved past the armed time: a write counts as a read too, since a check that reads
-//! a file and then rewrites it leaves its access time behind its write time.
+//! the same for the directory; NTFS with last-access updates on does the same. After the run,
+//! [`collect`] names every entry whose access or write time moved past the armed time: a write
+//! counts as a read too, since a check that reads a file and then rewrites it leaves its access
+//! time behind its write time.
 //!
 //! [`arm`] first proves the mount moves access times, on a probe file of its own outside the
-//! tree. A mount with `noatime`, or a filesystem that ignores access times, observes nothing:
-//! the record gets no footprint and is never reused (unknown is never a pass).
+//! tree. A mount with `noatime`, a volume with last-access updates off, or a filesystem that
+//! ignores access times, observes nothing: the record gets no footprint and is never reused
+//! (unknown is never a pass).
 
 use std::fs::{File, FileTimes};
 use std::path::Path;
@@ -73,9 +75,29 @@ fn probe(scratch: &Path, at: SystemTime) -> bool {
 }
 
 fn set(path: &Path, times: FileTimes) -> bool {
-    File::open(path)
+    open_to_set_times(path)
         .and_then(|file| file.set_times(times))
         .is_ok()
+}
+
+/// A handle that may set `path`'s times, whether it is a file or a directory.
+#[cfg(not(windows))]
+fn open_to_set_times(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+/// A handle that may set `path`'s times, whether it is a file or a directory. Windows refuses
+/// to set times through a handle opened only to read, and opens a directory only with backup
+/// semantics.
+#[cfg(windows)]
+fn open_to_set_times(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    std::fs::OpenOptions::new()
+        .access_mode(FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
 }
 
 /// What the check touched under `tree` since `armed`: the files it read (or wrote) and the
