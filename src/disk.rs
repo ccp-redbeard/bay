@@ -5,7 +5,7 @@
 //! repository never declares how full a box's disk may get. `0` turns it off.
 //!
 //! Free space is what `df -P` reports as available to this user, in 1024-byte blocks. On
-//! Windows the floor is not judged.
+//! Windows that `df` is Git for Windows' own; with none found, the floor is not judged.
 
 use std::path::{Path, PathBuf};
 
@@ -77,18 +77,19 @@ pub fn floor(git: &Git) -> Result<u64, String> {
 }
 
 /// Whether the filesystem that holds `path` (or, when `path` does not exist yet, its nearest
-/// existing ancestor) is below the box's floor. A floor of 0, or Windows, is never low.
+/// existing ancestor) is below the box's floor. A floor of 0, or Windows without Git's `df`,
+/// is never low.
 ///
 /// # Errors
 ///
 /// The floor cannot be read, or the free space cannot be measured.
 pub fn below_floor(git: &Git, path: &Path) -> Result<Option<Low>, String> {
     let floor_mib = floor(git)?;
-    if cfg!(windows) {
+    let Some(df) = df() else {
         return Ok(None);
-    }
+    };
     let measured = existing(path);
-    let free_mib = free_mib(&measured)?;
+    let free_mib = free_mib(&df, &measured)?;
     Ok((free_mib < floor_mib).then_some(Low {
         free_mib,
         floor_mib,
@@ -103,8 +104,19 @@ fn existing(path: &Path) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
 }
 
-/// The space available to this user on the filesystem holding `path`, in whole mebibytes.
-fn free_mib(path: &Path) -> Result<u64, String> {
+/// The `df` that measures free space: `df` itself on Unix; on Windows Git for Windows' own,
+/// or none.
+fn df() -> Option<PathBuf> {
+    if cfg!(windows) {
+        crate::platform::git_tool("df")
+    } else {
+        Some(PathBuf::from("df"))
+    }
+}
+
+/// The space available to this user on the filesystem holding `path`, in whole mebibytes, as
+/// `df` reads it.
+fn free_mib(df: &Path, path: &Path) -> Result<u64, String> {
     // A test build reads a disk of any size: no test can fill the machine's.
     if TEST_HOOKS
         && let Some(free) = std::env::var("BAY_TEST_FREE_MIB")
@@ -113,8 +125,14 @@ fn free_mib(path: &Path) -> Result<u64, String> {
     {
         return Ok(free);
     }
-    let mut cmd = std::process::Command::new("df");
-    cmd.arg("-Pk").arg(path);
+    let mut cmd = std::process::Command::new(df);
+    cmd.arg("-Pk");
+    // Git for Windows' `df` opens neither a verbatim (`\\?\`) path nor one with `\` in it.
+    if cfg!(windows) {
+        cmd.arg(crate::platform::sh_word(path));
+    } else {
+        cmd.arg(path);
+    }
     let output = crate::git::run_bounded(cmd, "df -Pk").map_err(|error| {
         format!(
             "the free space at {} could not be read: {}",

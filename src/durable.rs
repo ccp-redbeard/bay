@@ -32,6 +32,11 @@ pub fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
 /// the read-only attribute) is only opened, as it must exist.
 fn sync(path: &Path) -> io::Result<()> {
     if cfg!(windows) {
+        // Windows opens a directory only with flags std does not set, and refuses it as
+        // "Access is denied"; its file system journals a rename, so a directory needs no flush.
+        if path.is_dir() {
+            return Ok(());
+        }
         match std::fs::OpenOptions::new().write(true).open(path) {
             Ok(file) => file.sync_all(),
             Err(_) => std::fs::File::open(path).map(drop),
@@ -45,7 +50,8 @@ fn sync(path: &Path) -> io::Result<()> {
 /// Unix this is [`rename`]: a running program's file is replaced as any other is. Windows
 /// neither replaces nor removes a running `.exe`, but it renames one, so there `to` first moves
 /// aside ([`aside`]: `bay.exe` to `bay.old.exe`), then `from` takes its name; when that fails,
-/// `to` moves back. The next replacement removes what was moved aside once it no longer runs.
+/// `to` moves back. What moved aside is removed at once when nothing runs it, else by the next
+/// replacement once it no longer runs.
 ///
 /// # Errors
 ///
@@ -91,6 +97,8 @@ fn replace_aside(from: &Path, to: &Path, pid: u32) -> io::Result<()> {
         let _ = std::fs::rename(&away, to);
         return Err(error);
     }
+    // Gone at once when nothing runs it; one that still runs stays for the next replacement.
+    let _ = std::fs::remove_file(&away);
     Ok(())
 }
 
@@ -150,7 +158,8 @@ mod tests {
     }
 
     /// Plan W3: the Windows swap of a running program, run here as plain renames. The program
-    /// moves aside, the new one takes its name, and the next swap reuses the aside name.
+    /// moves aside, the new one takes its name, and the one moved aside, running nowhere here,
+    /// is removed.
     #[test]
     fn a_running_program_is_replaced_by_moving_it_aside() {
         let dir = tempfile::tempdir().unwrap();
@@ -160,13 +169,13 @@ mod tests {
         super::replace_aside(&from, &to, 7).unwrap();
         assert_eq!(std::fs::read_to_string(&to).unwrap(), "two");
         let old = dir.path().join("bay.old.exe");
-        assert_eq!(std::fs::read_to_string(&old).unwrap(), "one");
+        assert!(!old.exists());
         assert!(!from.exists());
 
         std::fs::write(&from, "three").unwrap();
         super::replace_aside(&from, &to, 7).unwrap();
         assert_eq!(std::fs::read_to_string(&to).unwrap(), "three");
-        assert_eq!(std::fs::read_to_string(&old).unwrap(), "two");
+        assert!(!old.exists());
 
         // A new program that is not there leaves the old one in its place.
         let missing = dir.path().join(".bay.missing");

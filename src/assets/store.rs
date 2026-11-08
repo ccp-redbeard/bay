@@ -227,7 +227,11 @@ fn ssh(host: &str, path: &str, verb: &str, args: &[String]) -> i32 {
         )
         .collect();
     words.remove(0);
-    let mut cmd = Command::new(program);
+    // A `#!/bin/sh` ssh command runs as Git runs it, through sh on Windows.
+    let mut cmd = match crate::platform::script(std::path::Path::new(&program)) {
+        Ok(cmd) => cmd,
+        Err(why) => return fail(format!("cannot run ssh: {why}")),
+    };
     cmd.args(words).arg(host).arg(quoted.join(" "));
     cmd.stdin(if local_in.is_some() {
         Stdio::piped()

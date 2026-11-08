@@ -191,7 +191,9 @@ impl InputEntry {
         if let Some(relative) = self
             .path
             .iter()
-            .find(|dir| !Path::new(dir.as_str()).is_absolute() || dir.contains(':'))
+            // A leading `/`, as for a check's `path` (`policy::validate_environment`): one
+            // policy judges every box alike.
+            .find(|dir| !dir.starts_with('/') || dir.contains(':'))
         {
             return Err(format!(
                 "input {} has the path entry {relative}; path takes absolute directories, each without ':'",

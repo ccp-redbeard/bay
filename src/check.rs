@@ -2195,7 +2195,8 @@ fn run_one(
         entry.network,
     ) {
         Ok(cmd) => cmd,
-        Err(why) => return Judged::without_units(Verdict::InfraFailure, Some(why)),
+        // G03: a check that never starts is unknown, as when Unix fails to exec the same `#!`.
+        Err(why) => return Judged::without_units(Verdict::Unknown, Some(why)),
     };
     // `INTERFACES` § 7: the check starts from a fixed baseline and nothing else, so evidence
     // names everything it could read: `PATH` from the policy, `HOME` and `TMPDIR` inside the

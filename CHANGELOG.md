@@ -3,7 +3,14 @@
 ## 0.6.30
 
 - On Windows, bay makes change ids without `/dev/urandom`, so `bay start` and `bay merge` work there.
-- A policy's check `path` entries are judged alike on every platform; Windows no longer calls them invalid.
+- A policy's check and input `path` entries are judged alike on every platform; Windows no longer calls them invalid.
+- On Windows, shell-script plugins start from whatever folder bay runs them in.
+- On Windows, a check whose script cannot start is unknown, as elsewhere.
+- On Windows, a check runs under exactly the `PATH` its policy names.
+- On Windows, bay can move folders aside, so `bay start` keeps a view's unsaved work.
+- On Windows, the disk floor is measured with Git for Windows' `df`.
+- On Windows, `bay install` removes the binary it replaced when nothing still runs it.
+- bay's background work on Windows no longer flashes console windows.
 
 ## 0.6.29
 

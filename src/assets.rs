@@ -374,7 +374,7 @@ impl Plugin<'_> {
             crate::run::command(self.work_root, self.command)
                 .ok_or("[plugin.assets] command is empty")??
         };
-        cmd.args(args);
+        cmd.args(args.iter().map(|arg| crate::platform::plain_arg(arg)));
         let ran = crate::run::captured(cmd, None, self.timeout)
             .map_err(|fault| format!("the assets plugin failed: {fault}"))?;
         let said = String::from_utf8_lossy(&ran.stderr);

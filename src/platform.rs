@@ -83,7 +83,8 @@ pub fn resolve(name: &str, path: Option<&OsStr>, pathext: Option<&OsStr>) -> Opt
 }
 
 /// Detaches `cmd` from the caller as a process of its own that outlives it: on Unix the leader
-/// of a new process group, on Windows a detached process in a new process group.
+/// of a new process group, on Windows a process in a new process group with a console of its
+/// own that has no window.
 pub fn detach(cmd: &mut Command) {
     #[cfg(unix)]
     {
@@ -94,13 +95,19 @@ pub fn detach(cmd: &mut Command) {
 }
 
 /// [`detach`] for a process bay started detached on Windows only: on Unix nothing changes.
+///
+/// The process gets a console with no window (`CREATE_NO_WINDOW`), not none at all
+/// (`DETACHED_PROCESS`): a process with no console gives every console program it starts, each
+/// `git` and `sh`, a new console window of its own, which flashes open and shut on the screen.
+/// Under a windowless console its children share that console and nothing shows. The new
+/// process group keeps the caller's Ctrl+C from reaching it.
 pub fn detach_windows(cmd: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     }
     #[cfg(not(windows))]
     let _ = cmd;
@@ -164,8 +171,10 @@ pub fn launch_of(head: &[u8]) -> Launch {
 }
 
 /// Where Git for Windows keeps `sh.exe`, given Git's exec path (`git --exec-path`, as
-/// `C:/Program Files/Git/mingw64/libexec/git-core`): `bin/sh.exe`, then `usr/bin/sh.exe`, in
-/// each directory above the exec path, nearest first.
+/// `C:/Program Files/Git/mingw64/libexec/git-core`): `usr/bin/sh.exe`, then `bin/sh.exe`, in
+/// each directory above the exec path, nearest first. `usr/bin/sh.exe` is the shell itself;
+/// `bin/sh.exe` is a launcher that puts Git's own directories (and `~/bin`) ahead of `PATH`,
+/// so a check would not run under the `PATH` its policy names.
 #[must_use]
 pub fn sh_candidates(exec_path: &Path) -> Vec<PathBuf> {
     exec_path
@@ -174,8 +183,8 @@ pub fn sh_candidates(exec_path: &Path) -> Vec<PathBuf> {
         .take(3)
         .flat_map(|dir| {
             [
-                dir.join("bin").join("sh.exe"),
                 dir.join("usr").join("bin").join("sh.exe"),
+                dir.join("bin").join("sh.exe"),
             ]
         })
         .collect()
@@ -206,7 +215,7 @@ pub fn script(program: &Path) -> Result<Command, String> {
         Launch::Sh(arg) => {
             let sh = git_sh().ok_or_else(|| format!("{}: {NO_SH}", program.display()))?;
             let mut cmd = Command::new(sh);
-            cmd.args(arg).arg(program);
+            cmd.args(arg).arg(sh_word(program));
             Ok(cmd)
         }
         Launch::Other(line) => Err(format!(
@@ -214,6 +223,31 @@ pub fn script(program: &Path) -> Result<Command, String> {
              script (through Git for Windows' sh.exe) or a program that starts by itself",
             program.display()
         )),
+    }
+}
+
+/// `path` as Git for Windows' `sh.exe` reads a script's path: with no verbatim `\\?\` prefix,
+/// which it cannot open, and `/` for `\`, which it reads as escapes. `C:/dir/script` names the
+/// same file to it as `C:\dir\script` does to Windows.
+#[must_use]
+pub fn sh_word(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    let text = text
+        .strip_prefix(r"\\?\UNC\")
+        .map(|rest| format!(r"\\{rest}"))
+        .or_else(|| text.strip_prefix(r"\\?\").map(str::to_owned))
+        .unwrap_or_else(|| text.into_owned());
+    text.replace('\\', "/")
+}
+
+/// An argument for a plugin, which may be a script `sh.exe` runs: on Windows a verbatim path
+/// (`\\?\C:\...`, as `canonicalize` gives) as [`sh_word`] spells it, which sh and Windows
+/// programs alike open; any other argument as it is.
+#[must_use]
+pub fn plain_arg(arg: &OsStr) -> OsString {
+    match arg.to_str() {
+        Some(text) if cfg!(windows) && text.starts_with(r"\\?\") => sh_word(Path::new(text)).into(),
+        _ => arg.to_owned(),
     }
 }
 
@@ -235,9 +269,25 @@ fn git_sh() -> Option<PathBuf> {
     .clone()
 }
 
+/// One of the POSIX tools Git for Windows keeps in its `usr\bin` (`df`, say), found from the
+/// `sh.exe` bay runs scripts through: in that directory, or in `usr\bin` beside it when sh came
+/// from Git's `bin`. `None` when there is no such sh or no such tool.
+#[must_use]
+pub fn git_tool(name: &str) -> Option<PathBuf> {
+    let sh = git_sh()?;
+    let dir = sh.parent()?;
+    let file = format!("{name}.exe");
+    [
+        dir.join(&file),
+        dir.parent()?.join("usr").join("bin").join(&file),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Launch, launch_of, resolve, sh_candidates};
+    use super::{Launch, launch_of, resolve, sh_candidates, sh_word};
     use std::ffi::OsStr;
 
     fn dirs() -> (tempfile::TempDir, tempfile::TempDir) {
@@ -246,6 +296,15 @@ mod tests {
 
     fn joined(dirs: &[&std::path::Path]) -> std::ffi::OsString {
         std::env::join_paths(dirs).unwrap()
+    }
+
+    #[test]
+    fn a_script_path_reaches_sh_with_slashes_and_no_verbatim_prefix() {
+        let path = std::path::Path::new;
+        assert_eq!(sh_word(path(r"\\?\C:\a\b\script")), "C:/a/b/script");
+        assert_eq!(sh_word(path(r"C:\a\script")), "C:/a/script");
+        assert_eq!(sh_word(path(r"\\?\UNC\host\share\s")), "//host/share/s");
+        assert_eq!(sh_word(path("/usr/bin/script")), "/usr/bin/script");
     }
 
     #[test]
@@ -346,12 +405,12 @@ mod tests {
         assert_eq!(
             found,
             [
-                at(&["Git", "mingw64", "libexec", "bin", "sh.exe"]),
                 at(&["Git", "mingw64", "libexec", "usr", "bin", "sh.exe"]),
-                at(&["Git", "mingw64", "bin", "sh.exe"]),
+                at(&["Git", "mingw64", "libexec", "bin", "sh.exe"]),
                 at(&["Git", "mingw64", "usr", "bin", "sh.exe"]),
-                at(&["Git", "bin", "sh.exe"]),
+                at(&["Git", "mingw64", "bin", "sh.exe"]),
                 at(&["Git", "usr", "bin", "sh.exe"]),
+                at(&["Git", "bin", "sh.exe"]),
             ]
         );
     }
