@@ -1201,8 +1201,9 @@ struct Held {
     release: PathBuf,
 }
 
-/// The takeover window of the live case; the seed adds a 2 s lease and a 1 s heartbeat.
-const TAKEOVER_S: u64 = 3;
+/// The takeover window of the live case; the seed adds a 2 s lease and a 1 s heartbeat. On
+/// Windows a start, a signature and a push take several seconds, so the window is wider there.
+const TAKEOVER_S: u64 = if cfg!(windows) { 20 } else { 3 };
 const LIVE_INTENT: &str = "CARD-LIVE";
 
 fn live_tip(test_box: &TestBox, host: &Path, machine: &str) -> Option<String> {
@@ -1279,7 +1280,13 @@ fn fingerprint(key: &Path) -> String {
 
 /// The current UTC time as bay's records write it.
 fn now_rfc3339() -> String {
-    bay::clock::now_rfc3339()
+    // The system's clock, not bay's: an oracle of its own.
+    let out = crate::support::sh()
+        .args(["-c", "date -u +%Y-%m-%dT%H:%M:%SZ"])
+        .env("PATH", crate::support::search_path(&[]))
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
 /// A `bay.live/1` summary for `machine` naming `key`, with one fresh row of change `id` by
@@ -1390,10 +1397,6 @@ fn live_case_with(takeover_s: u64) -> (TestBox, PathBuf, PathBuf, PathBuf, PathB
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the host's hook accepts a push it should refuse; under investigation"
-)]
 fn adoption_and_live_heartbeats_are_scoped_to_their_actor() {
     let (test_box, host, repo, b, b_key) = live_case();
     let started = test_box.bay_ok(&repo, &["start", LIVE_INTENT, "--paths", "src/"]);
@@ -1685,10 +1688,6 @@ fn a_burst_of_hook_events_ends_published_and_a_refused_live_push_shows_in_doctor
 ///
 /// Guard to mutate: `src/hook.rs` `takeover_window` reading `Config::load_or_committed` alone.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the host's hook accepts a push it should refuse; under investigation"
-)]
 fn the_takeover_window_reads_the_last_valid_config() {
     let (test_box, host, repo, b, b_key) = live_case();
     let started = test_box.bay_ok(&repo, &["start", LIVE_INTENT, "--paths", "src/"]);

@@ -227,12 +227,19 @@ fn ssh(host: &str, path: &str, verb: &str, args: &[String]) -> i32 {
         )
         .collect();
     words.remove(0);
-    // A `#!/bin/sh` ssh command runs as Git runs it, through sh on Windows.
-    let mut cmd = match crate::platform::script(std::path::Path::new(&program)) {
-        Ok(cmd) => cmd,
-        Err(why) => return fail(format!("cannot run ssh: {why}")),
+    // A `#!/bin/sh` ssh command named by its path runs as Git runs it, through sh on Windows.
+    // A bare name is looked up on PATH only, never in the working directory, which may be a
+    // repository's tree.
+    let mut cmd = if program.contains(['/', '\\']) {
+        match crate::platform::script(std::path::Path::new(&program)) {
+            Ok(cmd) => cmd,
+            Err(why) => return fail(format!("cannot run ssh: {why}")),
+        }
+    } else {
+        Command::new(crate::platform::program(&program))
     };
     cmd.args(words).arg(host).arg(quoted.join(" "));
+    crate::platform::sh_args_as_given(&mut cmd);
     cmd.stdin(if local_in.is_some() {
         Stdio::piped()
     } else {

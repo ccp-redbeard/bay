@@ -34,6 +34,7 @@ pub fn command(work_root: &Path, command: &str) -> Option<Result<Command, String
                 cmd.env(name, value);
             }
         }
+        crate::platform::sh_args_as_given(&mut cmd);
         cmd
     }))
 }

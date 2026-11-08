@@ -6,7 +6,7 @@
 - A policy's check and input `path` entries are judged alike on every platform; Windows no longer calls them invalid.
 - On Windows, shell-script plugins start from whatever folder bay runs them in.
 - On Windows, a check whose script cannot start is unknown, as elsewhere.
-- On Windows, a check runs under exactly the `PATH` its policy names.
+- On Windows, a check runs under the `PATH` its policy names; `/usr/bin` there also finds Git.
 - On Windows, bay can move folders aside, so `bay start` keeps a view's unsaved work.
 - On Windows, the disk floor is measured with Git for Windows' `df`.
 - On Windows, `bay install` removes the binary it replaced when nothing still runs it.

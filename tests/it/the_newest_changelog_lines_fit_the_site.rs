@@ -10,6 +10,7 @@ fn fits(changelog: &Path) -> (bool, String) {
     let out = crate::support::sh()
         .arg(script)
         .arg(changelog)
+        .env("PATH", crate::support::search_path(&[]))
         .output()
         .unwrap();
     (

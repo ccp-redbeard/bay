@@ -124,10 +124,28 @@ pub fn reap(mut child: Child) {
 
 /// A search path from `dirs`, joined with this platform's separator: `;` on Windows, where a
 /// directory holds a `:` after its drive letter, `:` elsewhere.
+///
+/// On Windows a script runs under Git for Windows' `sh.exe`, whose `/usr/bin` holds the POSIX
+/// tools but not `git.exe`; Git keeps that in `/mingw64/bin`, and its own `sh` launcher puts
+/// that first. So `/usr/bin` there brings `/mingw64/bin` just before it, and a policy's system
+/// directories hold Git as they do on Unix.
 #[must_use]
 pub fn search_path(dirs: &[String]) -> String {
-    dirs.join(if cfg!(windows) { ";" } else { ":" })
+    if !cfg!(windows) {
+        return dirs.join(":");
+    }
+    let mut out: Vec<&str> = Vec::with_capacity(dirs.len() + 1);
+    for dir in dirs {
+        if dir == "/usr/bin" && !dirs.iter().any(|named| named == MINGW_BIN) {
+            out.push(MINGW_BIN);
+        }
+        out.push(dir);
+    }
+    out.join(";")
 }
+
+/// Where Git for Windows keeps `git.exe`, as its `sh.exe` names the folder.
+const MINGW_BIN: &str = "/mingw64/bin";
 
 /// How an adapter's program starts, read from its first line (plan W6).
 #[derive(Debug, PartialEq, Eq)]
@@ -251,22 +269,48 @@ pub fn plain_arg(arg: &OsStr) -> OsString {
     }
 }
 
-/// Git for Windows' `sh.exe`, found once from `git --exec-path`.
+/// Git for Windows' `sh.exe`, found from `git --exec-path` once it is found: a lookup that
+/// fails (a `git` that timed out, say) is tried again by the next caller, so a long-running
+/// runner is never left without a shell until it restarts.
 fn git_sh() -> Option<PathBuf> {
-    static SH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-    SH.get_or_init(|| {
-        let mut cmd = Command::new("git");
-        cmd.arg("--exec-path");
-        let output = crate::git::run_bounded(cmd, "git --exec-path").ok()?;
-        let exec_path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        if !output.status.success() || exec_path.is_empty() {
-            return None;
-        }
-        sh_candidates(Path::new(&exec_path))
-            .into_iter()
-            .find(|candidate| candidate.is_file())
-    })
-    .clone()
+    static SH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if let Some(sh) = SH.get() {
+        return Some(sh.clone());
+    }
+    let mut cmd = Command::new("git");
+    cmd.arg("--exec-path");
+    let output = crate::git::run_bounded(cmd, "git --exec-path").ok()?;
+    let exec_path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !output.status.success() || exec_path.is_empty() {
+        return None;
+    }
+    let sh = sh_candidates(Path::new(&exec_path))
+        .into_iter()
+        .find(|candidate| candidate.is_file())?;
+    Some(SH.get_or_init(|| sh).clone())
+}
+
+/// Has `cmd`, when it starts Git for Windows' `sh.exe`, pass its arguments as given. sh.exe
+/// glob- and brace-expands the command line a Windows program hands it, against its working
+/// directory: a check's `scripts/check tests/*` would be expanded by the candidate's own file
+/// names, where Unix passes it as written. Called after the caller has set the environment,
+/// which may have been cleared. Any other program is left alone.
+pub fn sh_args_as_given(cmd: &mut Command) {
+    if !cfg!(windows) {
+        return;
+    }
+    let is_sh = Path::new(cmd.get_program())
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("sh.exe"));
+    if is_sh {
+        let msys = cmd
+            .get_envs()
+            .find(|(key, _)| key.eq_ignore_ascii_case("MSYS"))
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        cmd.env("MSYS", format!("{msys} noglob").trim_start());
+    }
 }
 
 /// One of the POSIX tools Git for Windows keeps in its `usr\bin` (`df`, say), found from the
@@ -296,6 +340,27 @@ mod tests {
 
     fn joined(dirs: &[&std::path::Path]) -> std::ffi::OsString {
         std::env::join_paths(dirs).unwrap()
+    }
+
+    #[test]
+    fn only_sh_is_told_to_take_its_arguments_as_given() {
+        let msys = |cmd: &std::process::Command| {
+            cmd.get_envs()
+                .find(|(key, _)| *key == "MSYS")
+                .and_then(|(_, value)| value)
+                .map(|value| value.to_string_lossy().into_owned())
+        };
+        let mut sh = std::process::Command::new(r"C:\Git\usr\bin\sh.exe");
+        sh.env_clear().env("MSYS", "winsymlinks");
+        super::sh_args_as_given(&mut sh);
+        let mut other = std::process::Command::new("checker.exe");
+        super::sh_args_as_given(&mut other);
+        assert_eq!(msys(&other), None);
+        if cfg!(windows) {
+            assert_eq!(msys(&sh).as_deref(), Some("winsymlinks noglob"));
+        } else {
+            assert_eq!(msys(&sh).as_deref(), Some("winsymlinks"));
+        }
     }
 
     #[test]
@@ -420,12 +485,22 @@ mod tests {
         let dirs = ["/usr/bin".to_owned(), "/bin".to_owned()];
         let joined = super::search_path(&dirs);
         let split: Vec<_> = std::env::split_paths(&joined).collect();
+        let want: &[&str] = if cfg!(windows) {
+            &["/mingw64/bin", "/usr/bin", "/bin"]
+        } else {
+            &["/usr/bin", "/bin"]
+        };
+        let want: Vec<_> = want.iter().map(std::path::Path::new).collect();
+        assert_eq!(split, want);
+        // A policy that names Git's folder itself keeps it where it put it, once.
+        let named = ["/usr/bin".to_owned(), "/mingw64/bin".to_owned()];
         assert_eq!(
-            split,
-            [
-                std::path::Path::new("/usr/bin"),
-                std::path::Path::new("/bin")
-            ]
+            super::search_path(&named),
+            if cfg!(windows) {
+                "/usr/bin;/mingw64/bin"
+            } else {
+                "/usr/bin:/mingw64/bin"
+            }
         );
     }
 

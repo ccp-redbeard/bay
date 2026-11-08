@@ -2214,6 +2214,9 @@ fn run_one(
         .env("PATH", crate::platform::search_path(&entry.path))
         // `policy::load_at` refuses an `env` name of the baseline, so none overrides it.
         .envs(declared);
+    // On Windows, sh.exe takes the command's arguments as written, as a Unix shell is handed
+    // them (`MSYS=noglob`, the one variable bay adds there).
+    crate::platform::sh_args_as_given(&mut cmd);
     let (output, stderr) = match exchange(hooks, cmd, &request, timeout, heartbeat) {
         Ok(output) => output,
         Err(why) => return Judged::without_units(Verdict::Unknown, Some(why)),

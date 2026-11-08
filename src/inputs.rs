@@ -406,6 +406,7 @@ fn run_provider(
     if !entry.path.is_empty() {
         cmd.env("PATH", crate::platform::search_path(&entry.path));
     }
+    crate::platform::sh_args_as_given(&mut cmd);
     let request = json!({"input": entry.name, "tree": tree}).to_string();
     // An input provider runs as any adapter does: in a process group of its own, killed whole
     // at its bound (`crate::run::bounded`).

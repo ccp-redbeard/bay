@@ -412,7 +412,13 @@ fn fleet_config(takeover_s: u64) -> String {
 
 /// The current UTC time as bay's records write it; such times compare as text.
 fn now_rfc3339() -> String {
-    bay::clock::now_rfc3339()
+    // The system's clock, not bay's: an oracle of its own.
+    let out = crate::support::sh()
+        .args(["-c", "date -u +%Y-%m-%dT%H:%M:%SZ"])
+        .env("PATH", crate::support::search_path(&[]))
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
 /// The `live.json` the remote holds for `machine`, if any.
