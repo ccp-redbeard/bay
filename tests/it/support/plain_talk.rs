@@ -26,18 +26,22 @@ impl Plain {
     /// and `c`.
     #[must_use]
     pub fn new(tables: &str) -> Self {
+        Self::new_with(tables, &[])
+    }
+
+    /// [`Plain::new`], with `extra` seed files.
+    #[must_use]
+    pub fn new_with(tables: &str, extra: &[(String, String)]) -> Self {
         let test_box = TestBox::new();
         let remote = test_box.bare_any("remote.git");
         let a = test_box.repo_without_remote_any("a");
         test_box.add_origin(&a, &remote);
-        test_box.seed_with_check(
-            &a,
-            &[("src/a.rs", "fn a() {}\n")],
-            &[(
-                ".bay/policy.toml".to_owned(),
-                format!("{UNCHECKED_POLICY}{tables}"),
-            )],
-        );
+        let mut files = vec![(
+            ".bay/policy.toml".to_owned(),
+            format!("{UNCHECKED_POLICY}{tables}"),
+        )];
+        files.extend_from_slice(extra);
+        test_box.seed_with_check(&a, &[("src/a.rs", "fn a() {}\n")], &files);
         let b = test_box.clone_of(&remote, "b");
         let c = test_box.clone_of(&remote, "c");
         Self {

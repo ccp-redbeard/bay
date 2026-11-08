@@ -20,13 +20,22 @@ use std::path::{Path, PathBuf};
 use support::{TestBox, check_files, passing_result, result_json};
 
 fn setup() -> (TestBox, PathBuf, PathBuf) {
+    setup_with(&[])
+}
+
+/// [`setup`], with `extra` seed files.
+fn setup_with(extra: &[(String, String)]) -> (TestBox, PathBuf, PathBuf) {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
     let remote = test_box.path().join("repo-remote.git");
     test_box.seed_with_check(
         &repo,
         &[("src/a.rs", "fn a() {}\n")],
-        &check_files("true", &passing_result(1), 1, 60),
+        &[
+            check_files("true", &passing_result(1), 1, 60),
+            extra.to_vec(),
+        ]
+        .concat(),
     );
     (test_box, repo, remote)
 }
@@ -482,12 +491,8 @@ fn heartbeat(test_box: &TestBox, repo: &Path, machine: &str, signer: &str, row: 
 /// is older than the takeover window, the same-name `start` adopts at once with the change id
 /// kept; and a heartbeat signed by another actor holds nothing.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn a_same_name_start_while_the_holder_is_live_is_held() {
-    let (test_box, repo, remote) = setup();
+    let (test_box, repo, remote) = setup_with(&[support::live_config()]);
     let start = |session: &str, intent: &str| {
         result_json(
             test_box

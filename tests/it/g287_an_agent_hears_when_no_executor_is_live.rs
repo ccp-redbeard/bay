@@ -155,14 +155,15 @@ fn queued_work_with_no_executor_is_told_once_per_state() {
 /// the fleet refs, which only `bay status` makes. A record older than the presence window is
 /// fetched again first, so a live runner whose newer presence the record lacks is never
 /// reported missing, which sent seats to start runners of their own.
+/// The runner's lease; the takeover window is twice it. After the runner's last pass the test
+/// queues a change and sends a prompt, some 20 s on Windows, where Git processes start slowly:
+/// the runner must stay live across them, so the lease there is longer.
+const LEASE_S: u64 = if cfg!(windows) { 30 } else { 5 };
+
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn a_live_runner_is_never_reported_missing_from_an_old_record() {
-    // A takeover window of ten seconds: twice this lease.
-    let (test_box, repo, executor) = seeded_with(Some("[runner]\nlease_s = 5\nheartbeat_s = 1\n"));
+    let config = format!("[runner]\nlease_s = {LEASE_S}\nheartbeat_s = 1\n");
+    let (test_box, repo, executor) = seeded_with(Some(&config));
     // A session with a cursor, which is what the line is told to.
     let started = hook(&test_box, &repo, "s-1", "session.start", 0);
     assert!(!started.contains(LINE), "{started}");
@@ -180,7 +181,7 @@ fn a_live_runner_is_never_reported_missing_from_an_old_record() {
     let (code, status) = result_json(test_box.bay(&repo).arg("status"));
     assert_eq!(code, 0, "{status}");
     // The record ages past the window while the runner writes a newer presence it lacks.
-    std::thread::sleep(std::time::Duration::from_secs(12));
+    std::thread::sleep(std::time::Duration::from_secs(LEASE_S * 2 + 2));
     pass();
     queue_one(&test_box, &repo);
     let told = prompt(&test_box, &repo, "s-1", 0);

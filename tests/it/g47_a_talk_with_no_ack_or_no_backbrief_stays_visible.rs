@@ -20,14 +20,15 @@ fn talk_row(status: &Value, id: &str) -> Value {
         .unwrap_or_else(|| panic!("talk {id} not listed: {status}"))
 }
 
+/// The talk's `follow_up`, from its send. A send and two status reads take some 20 s on
+/// Windows, where Git processes start slowly, so the follow-up there is later.
+const FOLLOW_UP_S: u64 = if cfg!(windows) { 60 } else { 6 };
+
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn status_lists_a_talk_until_it_closes_and_names_who_owes_the_reply() {
     let case = hosted_talk();
-    let follow_up = from_now(6);
+    let follow_up = from_now(FOLLOW_UP_S);
+    let follow_up_at = bay::clock::unix_of(&follow_up).unwrap();
     let (code, sent) = case.talk(
         "agent",
         &[
@@ -58,7 +59,9 @@ fn status_lists_a_talk_until_it_closes_and_names_who_owes_the_reply() {
     assert!(row["ack_age_s"].is_u64(), "{row}");
 
     // Past follow_up with no backbrief: stale, and still listed.
-    std::thread::sleep(std::time::Duration::from_secs(7));
+    while bay::live::unix_now() <= follow_up_at {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
     let (_, status) = case.status("agent-b");
     let row = talk_row(&status, &id);
     assert_eq!(row["standing"], "stale", "{row}");

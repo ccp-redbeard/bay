@@ -86,7 +86,10 @@ fn seeded(test_box: &TestBox) -> std::path::PathBuf {
     test_box.seed_with_check(
         &repo,
         &[("src/a.rs", "fn a() {}\n")],
-        &[(".bay/policy.toml".to_owned(), UNCHECKED_POLICY.to_owned())],
+        &[
+            (".bay/policy.toml".to_owned(), UNCHECKED_POLICY.to_owned()),
+            support::live_config(),
+        ],
     );
     repo
 }
@@ -123,10 +126,6 @@ fn install_writes_a_record_only_group_for_the_question_tools() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn a_question_is_recorded_and_its_dialog_opens_as_without_bay() {
     let test_box = TestBox::new();
     let repo = seeded(&test_box);
@@ -153,10 +152,6 @@ fn a_question_is_recorded_and_its_dialog_opens_as_without_bay() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn a_notification_names_its_kind_and_keeps_its_message_here() {
     let test_box = TestBox::new();
     let repo = seeded(&test_box);

@@ -521,6 +521,21 @@ pub fn check_files(
 /// is refused with `POLICY_MISSING`, so a test that lands without checks seeds this.
 pub const UNCHECKED_POLICY: &str = "revision = 1\nunchecked = true\n";
 
+/// `.bay/config.toml` for a test that reads live sessions: the seed's lease and heartbeat. A
+/// hook starts some 40 Git processes, 5 to 10 s on Windows, so a session there stays live
+/// across a few hooks only under a takeover window longer than the seed's 4 s.
+pub const LIVE_CONFIG: &str = if cfg!(windows) {
+    "[runner]\nlease_s = 2\nheartbeat_s = 1\ntakeover_s = 60\n"
+} else {
+    "[runner]\nlease_s = 2\nheartbeat_s = 1\n"
+};
+
+/// [`LIVE_CONFIG`] as a seed file.
+#[must_use]
+pub fn live_config() -> (String, String) {
+    (".bay/config.toml".to_owned(), LIVE_CONFIG.to_owned())
+}
+
 /// [`UNCHECKED_POLICY`] as the files [`TestBox::seed_with_check`] takes.
 #[must_use]
 pub fn unchecked_files() -> Vec<(String, String)> {

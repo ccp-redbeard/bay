@@ -62,7 +62,11 @@ fn refused(holder_started: bool) -> (TestBox, std::path::PathBuf, String) {
     test_box.seed_with_check(
         &repo,
         &[("src/a.rs", "fn a() {}\n")],
-        &support::check_files("true", &failing, 1, 60),
+        &[
+            support::check_files("true", &failing, 1, 60),
+            vec![support::live_config()],
+        ]
+        .concat(),
     );
     let runner = test_box.clone_of(&test_box.path().join("repo-remote.git"), "runner");
     hook(
@@ -113,10 +117,6 @@ fn told(test_box: &TestBox, repo: &Path, session: &str) -> String {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn while_the_holder_is_live_only_the_holder_is_told() {
     let (test_box, repo, id) = refused(true);
     // The holder is live now: on a loaded box the setup can outlast the takeover window.

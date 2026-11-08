@@ -300,14 +300,18 @@ fn a_box_that_cannot_serve_the_head_leaves_it_to_a_live_one_that_can() {
     assert_eq!(landed, both, "the box that serves env-b merged both");
 }
 
+/// The lease of the waiting operation. A run that merges starts some 300 Git processes, about
+/// 30 s on Windows, so the lease there is long enough that half of it still tells them apart.
+const LEASE_S: u64 = if cfg!(windows) { 600 } else { 60 };
+
 /// G425 (a fleet finding, 2026-10-28): an operation its holder left waiting for a worker holds
 /// no lease against a box that serves it. Before, that box watched a full lease, ten minutes
 /// on one fleet, while it ran nothing else, and only then took it over.
 #[test]
 fn a_box_that_serves_a_waiting_operation_takes_it_at_once() {
     let test_box = TestBox::new();
-    let (id, _repo, remote, runs) =
-        submitted_with(&test_box, Some("[runner]\nlease_s = 60\nheartbeat_s = 1\n"));
+    let config = format!("[runner]\nlease_s = {LEASE_S}\nheartbeat_s = 1\n");
+    let (id, _repo, remote, runs) = submitted_with(&test_box, Some(&config));
     let e1 = executor(&test_box, &remote, "exec-a", "env-a");
     let e2 = executor(&test_box, &remote, "exec-b", "env-b");
     let first = test_box.bay_ok(&e1, &["runner", "run", "--once"]);
@@ -322,8 +326,8 @@ fn a_box_that_serves_a_waiting_operation_takes_it_at_once() {
     assert_eq!(test_box.trunk_change_ids(&remote), vec![id]);
     assert_eq!(line_count(&runs), 1, "one check ran, on E2");
     assert!(
-        took < std::time::Duration::from_secs(30),
-        "E2 watched {took:?} before it took the waiting operation; the lease is 60 s"
+        took < std::time::Duration::from_secs(LEASE_S / 2),
+        "E2 watched {took:?} before it took the waiting operation; the lease is {LEASE_S} s"
     );
 }
 

@@ -109,17 +109,17 @@ fn closed(status: &Value) -> Vec<Value> {
         .clone()
 }
 
+/// How long the in-time talk has before it expires. Its send and the read take some 10 s on
+/// Windows, where Git processes start slowly, so it has longer there.
+const IN_TIME_S: u64 = if cfg!(windows) { 60 } else { 5 };
+
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn a_talk_read_after_it_expires_prints_expired_and_owes_no_backbrief() {
     let case = hosted_talk();
     hook(&case, "session.start", "01-SessionStart.json");
 
     // In time: read (acked) before `expires`.
-    let (in_time, _) = send(&case, "Take the capture now", 5);
+    let (in_time, _) = send(&case, "Take the capture now", IN_TIME_S);
     let (code, status) = case.status("agent-b");
     assert_eq!(code, 0, "{status}");
     assert_eq!(

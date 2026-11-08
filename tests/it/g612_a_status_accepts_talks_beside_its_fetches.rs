@@ -37,7 +37,7 @@ fn slow_remote(case: &Plain, dir: &Path) {
         .unwrap();
         crate::support::set_executable(&script);
         case.test_box
-            .git_ok(dir, &["config", key, script.to_str().unwrap()]);
+            .git_ok(dir, &["config", key, &crate::support::sh_path(&script)]);
     }
 }
 
@@ -214,10 +214,6 @@ fn acked(result: &Value, id: &str) {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn a_status_accepts_talks_in_two_round_trips_beside_its_receipts_sync() {
     let case = Plain::approvals();
     let id = talks_both_ways(&case);
@@ -230,10 +226,6 @@ fn a_status_accepts_talks_in_two_round_trips_beside_its_receipts_sync() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn a_status_since_accepts_talks_beside_its_other_fetches() {
     let case = Plain::approvals();
     let id = talks_both_ways(&case);

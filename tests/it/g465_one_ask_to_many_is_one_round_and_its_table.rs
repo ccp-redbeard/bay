@@ -186,12 +186,8 @@ fn live_session(case: &Plain, actor: &str) {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: the fleet map lists no live sessions; under investigation"
-)]
 fn to_live_asks_every_live_actor_but_the_sender() {
-    let case = Plain::approvals();
+    let case = Plain::new_with(&format!("{TALK_ON}{APPROVALS}"), &[support::live_config()]);
     for actor in ["agent", "agent-b", "agent-c"] {
         live_session(&case, actor);
     }

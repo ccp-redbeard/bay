@@ -65,7 +65,7 @@ fn a_chain_head_already_pushed_meanwhile_still_queues_the_change() {
     std::fs::write(
         &hook,
         format!(
-            "#!/bin/sh\nwhile read old new name; do\n  if [ \"$name\" = \"{chain}\" ] && [ ! -e {once} ]; then\n    touch {once}\n    env -u GIT_QUARANTINE_PATH git update-ref \"$name\" \"$new\" || exit 1\n  fi\ndone\nexit 0\n",
+            "#!/bin/sh\nwhile read old new name; do\n  if [ \"$name\" = \"{chain}\" ] && [ ! -e '{once}' ]; then\n    touch '{once}'\n    env -u GIT_QUARANTINE_PATH git update-ref \"$name\" \"$new\" || exit 1\n  fi\ndone\nexit 0\n",
             once = once.display()
         ),
     )
