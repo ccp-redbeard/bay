@@ -1,0 +1,73 @@
+# Builds and tests bay on Windows for a release of this fork, then attaches the binary.
+# Upstream bay has no hosted CI (AGENTS.md); this file belongs to the fork only.
+name: windows-release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach to (empty builds the branch, attaches nothing)
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      CARGO_TERM_COLOR: always
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets
+
+      - name: Unit tests, sha1 objects and files refs
+        run: cargo test --lib --bins
+
+      - name: Unit tests, sha256 objects and reftable refs
+        run: cargo test --lib --bins
+        env:
+          BAY_TEST_FORMATS: sha256/reftable
+
+      # The integration tests start their fake `#!/bin/sh` programs through this shim.
+      - name: Test shim
+        run: cargo build --example sh_shim
+
+      - name: Integration tests
+        run: cargo test --test it -- --test-threads 4
+
+      - name: Release build
+        run: cargo build --release
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/bay.exe dist/bay-x86_64-pc-windows-msvc.exe
+          (cd dist && sha256sum bay-x86_64-pc-windows-msvc.exe > SHA256SUMS && cat SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bay-windows
+          path: dist/
+
+      - name: Attach to the release
+        if: env.TAG != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
