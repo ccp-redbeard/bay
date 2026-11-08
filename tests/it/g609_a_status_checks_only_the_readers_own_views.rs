@@ -30,10 +30,6 @@ fn leftover<'a>(status: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: bay spawns more git processes than counted; under investigation"
-)]
 fn a_status_names_another_actors_ended_views_and_checks_only_its_own() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
@@ -62,11 +58,21 @@ fn a_status_names_another_actors_ended_views_and_checks_only_its_own() {
 
     // Every git spawn that names the view is kept.
     let spawns = test_box.path().join("spawns");
-    test_box.wrap_git(&format!(
-        "case \"$*\" in *{view}*) echo \"$*\" >> '{spawns}' ;; esac",
-        view = view.display(),
-        spawns = spawns.display(),
-    ));
+    test_box.wrap_git(&if cfg!(windows) {
+        // A Windows path may reach git with either separator, and in a pattern `\` quotes the
+        // character after it: the call and the view are compared with `/` only.
+        format!(
+            "args=$(printf '%s' \"$*\" | tr '\\\\' /)\ncase \"$args\" in *\"{view}\"*) echo \"$*\" >> '{spawns}' ;; esac",
+            view = view.display().to_string().replace('\\', "/"),
+            spawns = spawns.display(),
+        )
+    } else {
+        format!(
+            "case \"$*\" in *{view}*) echo \"$*\" >> '{spawns}' ;; esac",
+            view = view.display(),
+            spawns = spawns.display(),
+        )
+    });
     let checked = || {
         let text = std::fs::read_to_string(&spawns).unwrap_or_default();
         let _ = std::fs::remove_file(&spawns);

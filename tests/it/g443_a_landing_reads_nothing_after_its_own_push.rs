@@ -16,25 +16,14 @@ use crate::support;
 use std::path::{Path, PathBuf};
 
 use support::PRODUCER;
+use support::TestBox;
 use support::queued::{Check, host, ran_for};
-use support::{TestBox, write_executable};
 
 /// Puts a `git` on the box's PATH that writes every call's arguments, one line each, to the
 /// returned file, then runs the real git.
 fn trace_git(test_box: &TestBox) -> PathBuf {
-    let out = crate::support::sh()
-        .args(["-c", "command -v git"])
-        .output()
-        .unwrap();
-    let real = String::from_utf8(out.stdout).unwrap().trim().to_owned();
     let trace = test_box.path().join("git-trace");
-    write_executable(
-        &test_box.path().join("fakebin/git"),
-        &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec \"{real}\" \"$@\"\n",
-            trace.display()
-        ),
-    );
+    test_box.wrap_git(&format!("printf '%s\\n' \"$*\" >> '{}'", trace.display()));
     trace
 }
 
@@ -55,10 +44,6 @@ fn fetches_after_publish(trace: &Path, pattern: &str) -> Vec<String> {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: bay spawns more git processes than counted; under investigation"
-)]
 fn a_landing_fetches_no_log_and_no_place_after_its_own_push() {
     // A change with a place in the queue, as an executor queues it, so its head run releases
     // that place in the publishing push.

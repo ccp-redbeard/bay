@@ -181,9 +181,18 @@ impl TestBox {
     /// Every `git` on this box's `PATH` runs `snippet` first (shell: `$real` names the real git,
     /// `"$@"` holds the call's arguments), then runs the real git: for a test that makes another
     /// writer act at the moment bay makes one exact call.
+    /// In a snippet, [`CALLER`] names the bay process that made the call. On Windows the real
+    /// git gets back the `MSYS` the shim found (`examples/sh_shim.rs`), so a hook it runs
+    /// through sh.exe reads its arguments as given.
     pub fn wrap_git(&self, snippet: &str) {
         let real = self.real_git.display();
-        let script = format!("#!/bin/sh\nreal=\"{real}\"\n{snippet}\nexec \"$real\" \"$@\"\n");
+        let msys = if cfg!(windows) {
+            "MSYS=$BAY_TEST_SH_MSYS\n"
+        } else {
+            ""
+        };
+        let script =
+            format!("#!/bin/sh\nreal=\"{real}\"\n{msys}{snippet}\nexec \"$real\" \"$@\"\n");
         write_executable(&self.fakebin.join("git"), &script);
     }
 
@@ -914,6 +923,16 @@ pub fn key_line(principal: &str, key: &Path) -> String {
         words.next().unwrap()
     )
 }
+
+/// In a [`TestBox::wrap_git`] snippet, the shell word that names the bay process that made the
+/// call: its parent, `$PPID`. A shell that a Windows program starts reads `$PPID` as 1, so
+/// there it is the pid a test build of bay names in each git's environment
+/// (`BAY_TEST_CALLER_PID`).
+pub const CALLER: &str = if cfg!(windows) {
+    "$BAY_TEST_CALLER_PID"
+} else {
+    "$PPID"
+};
 
 /// Writes `script` through a child `sh`, so this multithreaded test process never holds a write
 /// descriptor to a file that is later executed. A sibling test that forks while that descriptor is

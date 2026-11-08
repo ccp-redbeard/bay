@@ -746,6 +746,7 @@ impl Git {
         cmd.env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C");
         // G104b: Git fetches no absent object on its own, unless this handle means it to.
         cmd.env("GIT_NO_LAZY_FETCH", if self.lazy_fetch { "0" } else { "1" });
+        caller_pid(&mut cmd);
         cmd
     }
 
@@ -1092,6 +1093,16 @@ fn trace_pid() -> u32 {
 pub(crate) fn trace_child(cmd: &mut Command) {
     if trace_file().is_some() {
         cmd.env("BAY_TEST_TRACE_PID", trace_pid().to_string());
+    }
+}
+
+/// G171: a test build names the process that starts a `git` in `BAY_TEST_CALLER_PID`, so a
+/// test's `git` wrapper can tell which bay process made a call where the wrapper's shell cannot
+/// read its parent: a shell that a Windows program starts reads `$PPID` as 1. Unlike a trace
+/// line's pid, it names this process, also in a sweep started for another command's work.
+fn caller_pid(cmd: &mut Command) {
+    if TEST_HOOKS {
+        cmd.env("BAY_TEST_CALLER_PID", std::process::id().to_string());
     }
 }
 

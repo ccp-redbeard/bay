@@ -32,9 +32,13 @@ fn main() -> ExitCode {
         cmd.arg(&script);
         // sh.exe expands globs and braces in the command line a Windows program hands it, so
         // `main^{commit}` would reach the script as `main^commit`: `noglob` passes every
-        // argument as given.
+        // argument as given. `noglob` also reaches the programs the script starts, and an MSYS
+        // program that a Windows one starts in turn (a hook Git runs through sh.exe) then
+        // misreads a quoted argument: the value found here stays in `BAY_TEST_SH_MSYS`, for a
+        // script that starts such a program to restore.
         let msys = std::env::var("MSYS").unwrap_or_default();
         cmd.env("MSYS", format!("{msys} noglob").trim_start());
+        cmd.env("BAY_TEST_SH_MSYS", &msys);
         cmd
     };
     match cmd.args(args).status() {

@@ -11,7 +11,7 @@ use crate::support;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use support::{TestBox, unchecked_files};
+use support::{CALLER, TestBox, unchecked_files};
 
 /// The calls the wrapper logged, each as the pid of the process that made it, then its arguments.
 fn calls(log: &Path) -> Vec<Vec<String>> {
@@ -43,10 +43,6 @@ fn reads(calls: &[Vec<String>], objects: &[&str]) -> BTreeMap<String, usize> {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: bay spawns more git processes than counted; under investigation"
-)]
 fn a_status_reads_the_registry_policy_and_config_at_trunk_once() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
@@ -61,7 +57,7 @@ fn a_status_reads_the_registry_policy_and_config_at_trunk_once() {
     let log = test_box.path().join("git-calls.log");
     let log_text = log.display();
     test_box.wrap_git(&format!(
-        "printf '%s\\037' \"$PPID\" \"$@\" >> '{log_text}'; printf '\\036' >> '{log_text}'"
+        "printf '%s\\037' \"{CALLER}\" \"$@\" >> '{log_text}'; printf '\\036' >> '{log_text}'"
     ));
     let status = test_box.bay_ok(&repo, &["status"]);
     assert_eq!(status["detail"]["main"], trunk.as_str(), "{status}");

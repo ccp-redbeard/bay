@@ -15,7 +15,7 @@ use crate::support;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use support::{TestBox, result_json, unchecked_files};
+use support::{CALLER, TestBox, result_json, unchecked_files};
 
 const CONFIG: &str = "main = \"main\"\n\n[[target]]\nname = \"staging\"\n";
 
@@ -74,11 +74,11 @@ fn slowed(sub: &str) -> String {
 }
 
 /// A wrapper body that waits half a second before each `git cat-file`, and keeps what each
-/// `git cat-file --batch` reads in `<dir>/batch.<parent pid>.<pid>`.
+/// `git cat-file --batch` reads in `<dir>/batch.<bay's pid>.<pid>`.
 fn kept_batches(dir: &Path) -> String {
     let dir = dir.display();
     format!(
-        "{}\ncase \" $* \" in\n  *\" cat-file --batch \"*) tee \"{dir}/batch.$PPID.$$\" | \"$real\" \"$@\"; exit $?;;\nesac",
+        "{}\ncase \" $* \" in\n  *\" cat-file --batch \"*) tee \"{dir}/batch.{CALLER}.$$\" | \"$real\" \"$@\"; exit $?;;\nesac",
         slowed("cat-file")
     )
 }
@@ -113,10 +113,6 @@ fn a_status_reads_its_sections_side_by_side() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: bay spawns more git processes than counted; under investigation"
-)]
 fn sections_side_by_side_read_each_chain_once() {
     let (test_box, repo, id) = store();
     let (other, _) = test_box.start_and_edit(&repo);
