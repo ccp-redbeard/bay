@@ -9,9 +9,6 @@
 //! Guard to mutate: `src/host.rs` `served_branch`: drop the `HEAD` fallback (the hook guards
 //! `main`, and a force push to `master` is taken).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::TestBox;

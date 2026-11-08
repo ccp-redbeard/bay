@@ -13,9 +13,6 @@
 //! given back and nothing lands in the pass), `host_said` in the batch refusal record (the
 //! record holds the command line, not GH013) and the yield's `cause` (it says "main moved").
 
-// Each case runs shell scripts (the check adapter, a host hook), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -38,9 +38,6 @@
 //! - `src/target.rs` `check_failures`: `.filter(|row| row["state"] != "pass")` to also skip
 //!   `product_failure` (the waived commit becomes promotable: the first case).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -20,9 +20,6 @@
 //! - `src/doctor.rs`, `skill_row`: `mismatched.push(dir.display().to_string());` under
 //!   `Installed::Missing` when `required` (dropped, doctor stays green with a copy gone).
 
-// The fake `claude` on PATH is a shell script, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -78,7 +75,10 @@ fn install_writes_every_config_dir_and_doctor_checks_each() {
             dir.display()
         );
         assert!(
-            written.contains(&serde_json::json!(skill.display().to_string())),
+            written
+                .iter()
+                .any(|path| path.as_str().map(crate::support::path_text)
+                    == Some(crate::support::path_text(&skill))),
             "{}: {installed}",
             dir.display()
         );

@@ -6,9 +6,6 @@
 //! waits `MAIN_RED`, naming the owner, and holds no queue place; a landing elsewhere lands, and a change that names
 //! the owner (`--fixes`) lands and clears the red.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

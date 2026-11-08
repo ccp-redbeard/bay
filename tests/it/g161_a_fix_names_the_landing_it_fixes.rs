@@ -7,9 +7,6 @@
 //! generation of the fixed change's intent, so it carries no `Supersedes:`. bay never infers the
 //! link from subject words: a change whose intent merely says "fix" carries no `Fixes:`.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -17,9 +17,6 @@
 //!   refused for its target).
 //! - `src/policy.rs` `load_at`: drop the `follow_up_s = 0` refusal.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

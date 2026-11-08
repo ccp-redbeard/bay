@@ -1,6 +1,3 @@
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use predicates::str::contains;
@@ -64,12 +61,8 @@ fn doctor_outside_a_repository_reports_the_machine_rows() {
     assert_eq!(skill["state"], "missing", "{result}");
     assert_eq!(skill["required"], false);
     assert_eq!(
-        skill["path"],
-        test_box
-            .home
-            .join(".claude/skills/bay")
-            .display()
-            .to_string()
+        crate::support::path_text(skill["path"].as_str().unwrap()),
+        crate::support::path_text(test_box.home.join(".claude/skills/bay"))
     );
     assert_eq!(
         row(&result, "remote")["state"],

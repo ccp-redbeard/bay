@@ -14,9 +14,6 @@
 //! first test finds the build output still there); `remove_ignored_directories`, a plain `git
 //! clean -fdXq` (the third test finds the `.env` gone).
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 
 use crate::support;

@@ -9,8 +9,6 @@
 //! Guard to mutate, in `src/publish.rs`: `main_moved_under` returning `false` (the second document
 //! lands while the head checks again).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::time::Duration;

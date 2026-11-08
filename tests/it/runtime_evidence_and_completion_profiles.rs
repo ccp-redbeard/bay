@@ -6,9 +6,6 @@
 //! dimension. `[profile.<name>] require` in the policy says which dimensions a change needs and
 //! `[policy] profile` selects one; status names each missing dimension and never says "done".
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

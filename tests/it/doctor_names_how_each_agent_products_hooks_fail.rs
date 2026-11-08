@@ -4,9 +4,6 @@
 //! `DESIGN` § 15.2; the hook-standards analysis, item (e). The row is informational: it is red
 //! only where bay's entries are missing, which the `hooks` row already reports.
 
-// Each case runs shell scripts (a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

@@ -7,9 +7,6 @@
 //! a default; and a policy at the base with `[agent] require_actor = true` makes `bay start`
 //! refuse `ACTOR_UNNAMED` while `BAY_ACTOR` is unset.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

@@ -7,9 +7,6 @@
 //! `require_signed = true` (judged at the base, like the profile) never counts unsigned
 //! records: a dimension that rests only on them is `unknown`, never satisfied (owner ruling Q6).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

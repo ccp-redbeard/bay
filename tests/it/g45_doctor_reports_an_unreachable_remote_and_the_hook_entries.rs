@@ -2,9 +2,6 @@
 //!
 //! `ROADMAP` § 1; `DESIGN` § 15.2–15.4.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, result_json, row};
@@ -78,7 +75,7 @@ fn missing_hook_entries_are_red_until_install_writes_them() {
     let (code, installed) = result_json(test_box.bay(&repo).arg("install"));
     assert_eq!(code, 0, "{installed}");
     assert_eq!(installed["detail"]["unrelated_hooks_unchanged"], true);
-    assert!(test_box.local_bin().join("bay").is_file());
+    assert!(test_box.local_bin().join(crate::support::BAY_EXE).is_file());
 
     let (code, result) = result_json(test_box.bay(&repo).arg("doctor"));
     assert_eq!(code, 0, "{result}");
@@ -117,10 +114,7 @@ fn install_fails_and_names_the_recovery_when_its_directory_is_off_path() {
     let repo = test_box.repo_any("repo");
     let out = test_box
         .bay(&repo)
-        .env(
-            "PATH",
-            format!("{}:/bin:/usr/bin", test_box.fakebin.display()),
-        )
+        .env("PATH", crate::support::search_path(&[&test_box.fakebin]))
         .arg("install")
         .output()
         .unwrap();
@@ -130,7 +124,7 @@ fn install_fails_and_names_the_recovery_when_its_directory_is_off_path() {
         text.contains("is not on PATH. Put that directory on PATH and run install again"),
         "{text}"
     );
-    assert!(!test_box.local_bin().join("bay").exists());
+    assert!(!test_box.local_bin().join(crate::support::BAY_EXE).exists());
 }
 
 #[test]

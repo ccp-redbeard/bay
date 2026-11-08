@@ -13,9 +13,6 @@
 //! is refused `CHANGE_HELD`, and adopts once that session ends or its heartbeat ages past the
 //! takeover window (rulings-open-questions.md Q8).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -485,6 +482,10 @@ fn heartbeat(test_box: &TestBox, repo: &Path, machine: &str, signer: &str, row: 
 /// is older than the takeover window, the same-name `start` adopts at once with the change id
 /// kept; and a heartbeat signed by another actor holds nothing.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: the fleet map lists no live sessions; under investigation"
+)]
 fn a_same_name_start_while_the_holder_is_live_is_held() {
     let (test_box, repo, remote) = setup();
     let start = |session: &str, intent: &str| {

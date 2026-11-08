@@ -10,9 +10,6 @@
 //! The guard is the target check in `denied_push` (`src/deny.rs`): make its
 //! `.find(|reference| pushes_target(reference.as_str()))` find nothing and this test fails.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

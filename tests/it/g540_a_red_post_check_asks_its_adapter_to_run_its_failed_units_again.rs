@@ -19,8 +19,6 @@
 //! unanswered-rerun refusal (the deaf run's pass clears the red), and `plan.gone` counting as an
 //! answer (the fix that deletes t3 stays `unknown`).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

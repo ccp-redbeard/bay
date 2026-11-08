@@ -9,9 +9,6 @@
 //! status reads the window again; `saved` drops its version filter, and a status reads answers
 //! another bay saved.
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

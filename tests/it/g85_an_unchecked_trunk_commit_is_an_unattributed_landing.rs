@@ -7,9 +7,6 @@
 //! commit that adopted bay. The fleet map shows the same, and `bay status --since` names each one as an
 //! `unattributed_landing` event.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

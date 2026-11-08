@@ -8,9 +8,6 @@
 //! moved on, never back. A local chain of the undone change that is ahead of the remote's is
 //! kept: the undo reads the remote's chain beside it, never over it.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::BTreeMap;

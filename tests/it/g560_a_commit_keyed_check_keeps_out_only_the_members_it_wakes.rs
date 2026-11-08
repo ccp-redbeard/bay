@@ -11,9 +11,6 @@
 //! and the woken member lands in the batch; `break` for `continue` and the batch ends at it),
 //! and the commit-keyed rule `no_batch` no longer holds (put it back and no batch forms).
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::PRODUCER;

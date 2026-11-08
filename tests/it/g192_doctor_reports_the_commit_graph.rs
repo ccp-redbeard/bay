@@ -2,9 +2,6 @@
 //! changed-path Bloom filters Git reads, or ok, in the `store` row. A graph only speeds walks
 //! up, so every finding is advisory and never a refusal.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, result_json, row};

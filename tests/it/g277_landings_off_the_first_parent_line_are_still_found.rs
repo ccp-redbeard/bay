@@ -24,9 +24,6 @@
 //! - `src/target.rs`: `crate::trunkline::on_line(git, from, tip)?` back to
 //!   `on_first_parent(git, from, tip)?` in `Read::row` (B reads as off its source).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

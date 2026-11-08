@@ -8,9 +8,6 @@
 //! Guard to mutate: `src/check.rs` `run_all`: drop the `firsts` phase (the slow check starts
 //! beside the first one, in parallel).
 
-// Each case runs shell scripts (adapters, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

@@ -12,9 +12,6 @@
 //! - `src/agent_settings.rs` `renamed_claude_events`: `event != bay_event` to `false` (no
 //!   entry is named).
 
-// `bay install` and doctor run with a fake `claude` on PATH (a shell script), so Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::json;

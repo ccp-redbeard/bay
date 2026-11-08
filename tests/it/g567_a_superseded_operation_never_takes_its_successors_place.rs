@@ -11,9 +11,6 @@
 //! again); the `crate::queue::newer` stop in `queue_gate` (drop it, and an operation read from
 //! a chain behind the queue replaces its successor's place).
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

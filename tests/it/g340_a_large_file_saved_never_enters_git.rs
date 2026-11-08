@@ -16,12 +16,8 @@
 //! - `src/assets.rs` `Plugin::put`: drop the `said != id` refusal (a lying plugin passes the kit).
 //! - `src/assets.rs` `offload`: drop the `exclude_paths` call (the file shows as untracked).
 
-// Each case runs shell scripts (a plugin), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use support::{TestBox, UNCHECKED_POLICY, check_files, passing_result, result_json};
@@ -71,17 +67,13 @@ pub(crate) fn trunk_with(
         ".bay/config.toml".to_owned(),
         format!(
             "[plugin.assets]\ncommand = \"scripts/assets {}\"\n{over}",
-            store(&test_box).display()
+            crate::support::sh_path(store(&test_box))
         ),
     ));
     seeded.push(("scripts/assets".to_owned(), plugin.to_owned()));
     test_box.seed_with_check(&repo, &[("src/a.rs", "fn a() {}\n")], &seeded);
-    std::fs::set_permissions(
-        repo.join("scripts/assets"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
-    test_box.git_ok(&repo, &["add", "scripts/assets"]);
+    crate::support::set_executable(&repo.join("scripts/assets"));
+    test_box.git_ok(&repo, &["add", "--chmod=+x", "scripts/assets"]);
     test_box.git_ok(&repo, &["commit", "-q", "-m", "the plugin runs"]);
     test_box.git_ok(&repo, &["push", "-q", "origin", "main"]);
     (test_box, repo, remote)
@@ -212,11 +204,7 @@ fn the_plugin_test_holds_a_plugin_to_the_contract() {
     assert_eq!(tested["detail"]["passed"], 8, "{tested}");
 
     std::fs::write(repo.join("scripts/liar"), LYING_PLUGIN).unwrap();
-    std::fs::set_permissions(
-        repo.join("scripts/liar"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
+    crate::support::set_executable(&repo.join("scripts/liar"));
     let (code, failed) = kit(&test_box, &repo, "scripts/liar");
     assert_ne!(code, 0, "{failed}");
     let put = failed["detail"]["cases"]

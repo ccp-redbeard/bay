@@ -13,9 +13,6 @@
 //! sent), the `sent` arm (it names no one), and the read of `detail.talk` that makes a result a
 //! talk's (every talk says "Done" again).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::HashSet;

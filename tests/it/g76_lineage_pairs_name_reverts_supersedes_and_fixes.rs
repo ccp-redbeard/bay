@@ -10,9 +10,6 @@
 //! executor-signed bay publication, so a typed trailer on a commit outside bay is listed as one.
 //! The query reads local refs only: it never fetches.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

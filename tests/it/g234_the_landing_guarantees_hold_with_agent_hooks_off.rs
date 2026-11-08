@@ -6,9 +6,6 @@
 //! trunk is never forced (G2), unknown is never pass (G3), and on a bay-hosted trunk an
 //! executor publishes, executor-signed, while an agent's own push of trunk is refused (G33).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -25,9 +25,6 @@
 //! `src/talk/replies.rs` `entries`: the status word of a backbrief. In `src/talk/send.rs`
 //! `repeated`: the push of a reply kept here (the same command again never sends it).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

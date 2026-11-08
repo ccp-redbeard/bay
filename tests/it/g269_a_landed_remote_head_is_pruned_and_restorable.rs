@@ -30,9 +30,6 @@
 //! - the `--force-with-lease=refs/heads/<name>:<sha>` of the delete: make it `--force`, and the
 //!   branch moved after the census is deleted.
 
-// The lease case runs a shell wrapper around git, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::BTreeMap;

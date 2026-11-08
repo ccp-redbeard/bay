@@ -5,8 +5,6 @@
 //!
 //! Guard to mutate, in `src/executor.rs`: `sweep_ended` returning at once.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::PRODUCER;

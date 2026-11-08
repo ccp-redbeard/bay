@@ -7,8 +7,6 @@
 //! added path, and the view never holds `docs/`); `src/view.rs` `keep_declared` returning before
 //! its `sparse-checkout add` (the change declares `docs/`, and its view does not hold it).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

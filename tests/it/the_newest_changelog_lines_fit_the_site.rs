@@ -4,11 +4,10 @@
 //! runs the same script, on the real changelog and on two that break it.
 
 use std::path::Path;
-use std::process::Command;
 
 fn fits(changelog: &Path) -> (bool, String) {
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/changelog-fits.sh");
-    let out = Command::new("sh")
+    let out = crate::support::sh()
         .arg(script)
         .arg(changelog)
         .output()

@@ -65,7 +65,7 @@ fn an_update_never_waits_and_the_executor_moves_between_operations() {
 
     // bay as installed: the executor runs the install path, and loops.
     std::fs::create_dir_all(test_box.local_bin()).unwrap();
-    let installed = test_box.local_bin().join("bay");
+    let installed = test_box.local_bin().join(crate::support::BAY_EXE);
     std::fs::copy(env!("CARGO_BIN_EXE_bay"), &installed).unwrap();
     let release = test_box.path().join("release");
     let paused = test_box.path().join("release.paused");
@@ -160,11 +160,7 @@ fn first_line(out: impl std::io::Read + Send + 'static) -> String {
 /// The installed bay running an executor loop on `executor`, held after it persists its
 /// operation until `release` exists.
 fn held_executor(test_box: &TestBox, installed: &Path, executor: &Path, release: &Path) -> Reaped {
-    let path = format!(
-        "{}:{}:/bin:/usr/bin",
-        test_box.fakebin.display(),
-        test_box.local_bin().display()
-    );
+    let path = test_box.path_var();
     Reaped(
         Command::new(installed)
             .arg("-C")

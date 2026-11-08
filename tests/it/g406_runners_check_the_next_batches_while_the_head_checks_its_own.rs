@@ -8,8 +8,6 @@
 //! Guard to mutate, in `src/publish.rs`: `precheck` routing to `speculate_batch` when batching
 //! is on (route to the per-entry pre-check instead).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::PRODUCER;

@@ -8,9 +8,6 @@
 //! backoff (ten empty polls double the interval) is the unit test in `talk::poll`. A test build
 //! scales the schedule's second by `BAY_TEST_TALK_POLL_MS`.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::process::Stdio;

@@ -5,9 +5,6 @@
 //! refused `CHANGE_ALREADY_MERGED` because the scan starts at `base_first`; `status` shows the
 //! change landed, never open.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::time::{Duration, Instant};

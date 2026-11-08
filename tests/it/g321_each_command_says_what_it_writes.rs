@@ -12,9 +12,6 @@
 //! - `src/contract.rs` `walk`: `"writes": writes.map(...)` to `"writes": null` (no command declares).
 //! - `src/guide.rs` `section`: drop the `Writes:` line (the page shows nothing).
 
-// The repository is seeded with a check script, so Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::TestBox;

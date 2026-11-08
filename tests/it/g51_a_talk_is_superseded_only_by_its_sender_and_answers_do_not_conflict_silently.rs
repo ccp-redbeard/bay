@@ -11,9 +11,6 @@
 //! recipient's `SessionStart` notice naming the replaced talk comes with the hook notices. A
 //! closed talk does not hold its ask: asked again, it is a new talk (G461).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::{Value, json};

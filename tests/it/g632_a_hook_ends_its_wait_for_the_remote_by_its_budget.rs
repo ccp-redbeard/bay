@@ -13,9 +13,6 @@
 //! `src/notice.rs`, `no_executor` fetches a stale presence record itself; in `src/git.rs`, a
 //! call to the remote keeps its own bound whatever the deadline.
 
-// The slow remote is a shell command, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;
@@ -125,6 +122,10 @@ fn prompt(case: &TalkCase) -> (String, Duration) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a timing bound this machine's process starts miss; under investigation"
+)]
 fn a_prompt_is_not_held_by_a_slow_remote_and_its_talk_is_told_at_a_later_hook() {
     let case = hosted_talk();
     let follow_up = from_now(3600);
@@ -165,6 +166,10 @@ fn a_prompt_is_not_held_by_a_slow_remote_and_its_talk_is_told_at_a_later_hook() 
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a timing bound this machine's process starts miss; under investigation"
+)]
 fn a_lockable_edit_ends_its_wait_for_a_slow_remote_by_the_budget() {
     let test_box = TestBox::new();
     let first = test_box.repo_any("repo");

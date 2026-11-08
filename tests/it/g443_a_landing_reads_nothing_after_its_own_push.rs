@@ -11,9 +11,6 @@
 //! `log::fetch`, and the `ctx.pushed_landing.is_none()` in `execute_op`'s release of the head's
 //! place, before its `holds_place` refetch of the change's chain (`src/publish.rs`).
 
-// Each case runs shell scripts (the adapter, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -25,7 +22,7 @@ use support::{TestBox, write_executable};
 /// Puts a `git` on the box's PATH that writes every call's arguments, one line each, to the
 /// returned file, then runs the real git.
 fn trace_git(test_box: &TestBox) -> PathBuf {
-    let out = std::process::Command::new("sh")
+    let out = crate::support::sh()
         .args(["-c", "command -v git"])
         .output()
         .unwrap();
@@ -58,6 +55,10 @@ fn fetches_after_publish(trace: &Path, pattern: &str) -> Vec<String> {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: bay spawns more git processes than counted; under investigation"
+)]
 fn a_landing_fetches_no_log_and_no_place_after_its_own_push() {
     // A change with a place in the queue, as an executor queues it, so its head run releases
     // that place in the publishing push.

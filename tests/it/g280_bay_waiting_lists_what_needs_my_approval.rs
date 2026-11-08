@@ -23,9 +23,6 @@
 //!   `let held = true;` (the `CARD-failing` change, refused `CHECK_FAILED` on `billing/`, is
 //!   listed too).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::json;

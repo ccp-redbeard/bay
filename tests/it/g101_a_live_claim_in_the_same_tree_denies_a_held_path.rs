@@ -11,9 +11,6 @@
 //! read allows the write with a `COVERAGE_UNKNOWN` notice recorded in the session's row (ruling
 //! R5), never silently.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

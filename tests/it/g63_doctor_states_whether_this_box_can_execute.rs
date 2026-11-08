@@ -7,9 +7,6 @@
 //! `--role` an unsigned box is reported as an agent view, and the result says the role was
 //! inferred.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, result_json, row};

@@ -6,9 +6,6 @@
 //! chain holds what was pushed and nothing was refused: bay pushes the request alone, and the
 //! change is queued.
 
-// The pause runs a submit as a background process, on Unix only like the other pause tests.
-#![cfg(unix)]
-
 use std::time::{Duration, Instant};
 
 use crate::support;
@@ -16,6 +13,10 @@ use crate::support;
 use support::{TestBox, check_files, passing_result};
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a runner's queue handling differs; under investigation"
+)]
 fn a_chain_head_already_pushed_meanwhile_still_queues_the_change() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
@@ -70,8 +71,7 @@ fn a_chain_head_already_pushed_meanwhile_still_queues_the_change() {
     )
     .unwrap();
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::support::set_executable(&hook);
     }
     std::fs::write(&release, "go").unwrap();
     let output = child.wait_with_output().unwrap();

@@ -9,9 +9,6 @@
 //! another producer, or of another kind, covers nothing. Without a registry every row says
 //! `trust: "unsigned"`.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

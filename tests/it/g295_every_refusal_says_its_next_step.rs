@@ -17,9 +17,6 @@
 //! - `src/status.rs` `describe`: `"next_step": reason.map(Reason::next),` (drop the line): the
 //!   failed check's operation in `bay status` carries no next step.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::HashMap;

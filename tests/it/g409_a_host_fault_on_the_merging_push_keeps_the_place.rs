@@ -7,8 +7,6 @@
 //! Guard to mutate: `src/publish.rs` `after_refused_push`: a refusal on an unmoved main is
 //! `failed` (the B4 retry removed).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json, write_executable};

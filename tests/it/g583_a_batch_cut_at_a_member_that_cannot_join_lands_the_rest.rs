@@ -11,9 +11,6 @@
 //! The guard to mutate: `join_or_cut` (`src/publish.rs`); give every claim back at the first
 //! member that cannot join and the head lands alone.
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

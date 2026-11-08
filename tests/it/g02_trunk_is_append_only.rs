@@ -3,9 +3,6 @@
 //! A rewound remote is detected before publication; bay never forces; with the host rule on, a
 //! force push is refused.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

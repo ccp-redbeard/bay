@@ -263,7 +263,7 @@ fn a_hook_reads_only_what_changed_and_its_record_stays_small() {
     // From here on, log every path the hook hashes.
     let log = test_box.path().join("hashed.log");
     let real = String::from_utf8(
-        std::process::Command::new("sh")
+        crate::support::sh()
             .args(["-c", "command -v git"])
             .output()
             .unwrap()
@@ -412,11 +412,7 @@ fn fleet_config(takeover_s: u64) -> String {
 
 /// The current UTC time as bay's records write it; such times compare as text.
 fn now_rfc3339() -> String {
-    let out = std::process::Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .unwrap();
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    bay::clock::now_rfc3339()
 }
 
 /// The `live.json` the remote holds for `machine`, if any.

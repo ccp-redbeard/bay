@@ -195,11 +195,7 @@ fn post_rows(result: &Value) -> Vec<&Value> {
 
 /// The installed bay running a runner loop on `executor`, its stderr in `log`.
 fn runner(test_box: &TestBox, installed: &Path, executor: &Path, log: &Path) -> Reaped {
-    let path = format!(
-        "{}:{}:/bin:/usr/bin",
-        test_box.fakebin.display(),
-        test_box.local_bin().display()
-    );
+    let path = test_box.path_var();
     Reaped(
         Command::new(installed)
             .arg("-C")
@@ -235,7 +231,7 @@ fn a_runner_moves_to_a_new_binary_only_after_its_post_pieces_end() {
     // bay as installed runs a runner loop: it lands `one`, then starts `slow` on main's tip.
     let executor = test_box.clone_of(&remote, "executor");
     std::fs::create_dir_all(test_box.local_bin()).unwrap();
-    let installed = test_box.local_bin().join("bay");
+    let installed = test_box.local_bin().join(crate::support::BAY_EXE);
     std::fs::copy(env!("CARGO_BIN_EXE_bay"), &installed).unwrap();
     let log = test_box.path().join("runner.log");
     let mut child = runner(&test_box, &installed, &executor, &log);

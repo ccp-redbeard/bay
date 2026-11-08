@@ -8,9 +8,6 @@
 //!
 //! The guard to mutate: the `claimed` signing-mode read in `notice::arrived` (`src/notice.rs`).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

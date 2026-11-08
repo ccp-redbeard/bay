@@ -11,9 +11,6 @@
 //! and an in-flight ref (`refs/bay/inflight/<op id>`, G173) does not, so it cannot join the set
 //! by mistake. It lives in a namespace of its own and is a directory of no pushable ref.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

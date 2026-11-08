@@ -17,9 +17,6 @@
 //! - `src/heads.rs` `run`: `"stranded": crate::stranded::local(git)?,` (drop it): the second
 //!   case's detail names no stranded branch or worktree.
 
-// The box's git is a shell wrapper on PATH, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::BTreeMap;

@@ -6,8 +6,6 @@
 //!
 //! Guard to mutate, in `src/publish.rs`: `repairs_red` returning `false`.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::queued::{Check, OTHER_PRODUCER, Trust, finished, host_under};

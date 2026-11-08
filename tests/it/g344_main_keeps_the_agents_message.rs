@@ -12,9 +12,6 @@
 //! - `src/publish.rs` `candidate_message`: return `bay_message` alone (main's commit holds
 //!   only bay's lines).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

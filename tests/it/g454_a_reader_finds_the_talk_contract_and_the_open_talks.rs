@@ -18,9 +18,6 @@
 //! - `src/fleet.rs` `talks`: the byte budget dropped (every row listed, `talks_more` 0).
 //! - `src/fleet.rs` `talks`: the rows kept oldest first (the newest is cut).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::{Value, json};

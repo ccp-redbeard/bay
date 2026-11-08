@@ -4,9 +4,6 @@
 //! the notes tree holds the note, the batch read names the producer, the tree and the blob, and
 //! once the blob is back it reads the record again.
 
-// The landing runs a shell check adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::Path;
 
 use bay::evidence;

@@ -14,11 +14,8 @@
 //! merges the change itself); the `refused_for_permission` branch of the publishing push (the
 //! client retries the push until the operation is blocked).
 
-#![cfg(unix)]
-
 use crate::support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use support::{TestBox, check_files, passing_result, result_json};
@@ -141,7 +138,7 @@ fn a_run_whose_push_the_host_refuses_for_permission_leaves_the_change_to_the_run
         "#!/bin/sh\nwhile read old new ref; do\n  if [ \"$ref\" = refs/heads/main ] && [ -n \"$CLIENT_MAY_NOT_PUSH\" ]; then\n    echo 'error: GH013: Repository rule violations found for refs/heads/main.' >&2\n    echo '- Cannot update this protected ref.' >&2\n    exit 1\n  fi\ndone\nexit 0\n",
     )
     .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::support::set_executable(&hook);
 
     let (id, view) = test_box.start_and_edit(&repo);
     let (code, waited) = result_json(

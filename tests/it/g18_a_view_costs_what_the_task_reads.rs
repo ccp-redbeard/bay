@@ -6,9 +6,6 @@
 //! input; a check cannot write into another change's workspace; a view holds no links into
 //! another live checkout.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -89,7 +86,7 @@ fn a_sparse_view_from_the_cache_lands_with_no_full_clone() {
     // A view links only into the cache, which is not a live checkout, and holds no symlinks.
     let link = std::fs::read_to_string(view.join(".git")).unwrap();
     assert!(
-        link.contains(&format!("{}", cache.join(".git").display())),
+        crate::support::path_text(&link).contains(&crate::support::path_text(cache.join(".git"))),
         "{link}"
     );
     let checked_out: Vec<_> = std::fs::read_dir(&cache)

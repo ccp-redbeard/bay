@@ -15,8 +15,6 @@
 //! that names the check `suite` and changes no file on its paths is not its fix), and
 //! `Red::named_by` naming the merges a red was seen failing on (`suite`'s fix is `tool`'s).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

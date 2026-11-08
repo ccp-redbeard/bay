@@ -6,8 +6,6 @@
 //! Guards to mutate: `src/repo.rs` `fetch_evidence` listing the refs before it fetches;
 //! `src/status.rs` calling `fetch_evidence` rather than `fetch_evidence_once`.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

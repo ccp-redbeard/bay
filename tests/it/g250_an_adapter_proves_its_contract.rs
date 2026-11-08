@@ -8,9 +8,6 @@
 //! noise, a variable bay clears) fails exactly the matching cases, and the command exits
 //! nonzero.
 
-// Each case runs shell adapters, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::BTreeMap;

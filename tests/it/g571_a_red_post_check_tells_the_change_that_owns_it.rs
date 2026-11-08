@@ -13,9 +13,6 @@
 //! - `src/notice.rs` `KINDS`: drop `"red_owner"`, and the session hears nothing.
 //! - `src/executor.rs` `pass`: drop `notes.extend(red_owners(repo))`, and no event is written.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

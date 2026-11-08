@@ -6,8 +6,6 @@
 //! Guard to mutate: `src/git.rs` `as_formatted`: a fetch of bay's records alone keeps the
 //! clone's blob filter.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

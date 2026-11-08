@@ -7,9 +7,6 @@
 //! `bay status --all` shows it per session, and doctor's `agent-hooks` row says that bay's
 //! deny holds under `bypassPermissions` (the G61 probes P5a and P5b).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

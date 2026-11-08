@@ -6,9 +6,6 @@
 //! candidate that edits the list is a policy change, checked by the base's policy first, so
 //! widening the list for itself has no effect on its own landing (G26).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

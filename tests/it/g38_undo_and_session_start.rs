@@ -16,9 +16,6 @@
 //! session of the same actor is told of its open refusals wherever it starts; the hook reads the
 //! local cache only.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;
@@ -402,7 +399,7 @@ fn an_undo_that_does_not_merge_is_a_merge_conflict_with_the_view_open() {
 /// Puts a `git` on the box's PATH that fails, as an unreachable remote does, every fetch or
 /// listing of a landed marker; every other call runs the real git.
 fn fail_marker_reads(test_box: &TestBox) {
-    let out = std::process::Command::new("sh")
+    let out = crate::support::sh()
         .args(["-c", "command -v git"])
         .output()
         .unwrap();

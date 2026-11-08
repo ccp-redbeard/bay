@@ -46,7 +46,7 @@ fn a_runner_stays_on_its_version_when_the_new_binary_lacks_its_command() {
     );
     let runner = test_box.clone_of(&remote, "runner");
     std::fs::create_dir_all(test_box.local_bin()).unwrap();
-    let installed = test_box.local_bin().join("bay");
+    let installed = test_box.local_bin().join(crate::support::BAY_EXE);
     std::fs::copy(env!("CARGO_BIN_EXE_bay"), &installed).unwrap();
     let mut child = looping(&test_box, &installed, &runner);
     let (lines, receive) = std::sync::mpsc::channel();
@@ -96,11 +96,7 @@ fn a_runner_stays_on_its_version_when_the_new_binary_lacks_its_command() {
 
 /// The installed bay running a runner loop on `runner`.
 fn looping(test_box: &TestBox, installed: &Path, runner: &Path) -> Reaped {
-    let path = format!(
-        "{}:{}:/bin:/usr/bin",
-        test_box.fakebin.display(),
-        test_box.local_bin().display()
-    );
+    let path = test_box.path_var();
     Reaped(
         Command::new(installed)
             .arg("-C")

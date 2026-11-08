@@ -27,9 +27,6 @@
 //!   `let held = true;` (an approval after the rejection is refused as answered, never naming
 //!   the operation's `CHECK_FAILED`).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::{Value, json};

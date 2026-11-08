@@ -12,9 +12,6 @@
 //! any glob: the stamp covers the excluded file, so the landing on it sets the approval aside)
 //! and `gated_changes` (back to any glob: the set-aside approval names the excluded file).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

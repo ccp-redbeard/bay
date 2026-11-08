@@ -10,9 +10,6 @@
 //! `if width > 1`: make it `if width > MAX_PARALLEL_CHECKS` and every candidate's checks run
 //! serially, so the three 3 s checks below no longer overlap and the land takes 9 s or more.
 
-// Each case runs a check adapter (a shell script), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

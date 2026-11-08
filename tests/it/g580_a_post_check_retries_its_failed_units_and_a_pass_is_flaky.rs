@@ -17,8 +17,6 @@
 //! refused, and the policy never loads); in `src/status.rs` `flakes` counting post checks (the
 //! suite row is missing).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

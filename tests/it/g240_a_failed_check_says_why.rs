@@ -5,9 +5,6 @@
 //! refusal's `detail.checks` and in `bay status`. A longer reason makes the run
 //! `infra_failure`: bay never cuts it, and never copies a check's raw output.
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use bay::git::Git;

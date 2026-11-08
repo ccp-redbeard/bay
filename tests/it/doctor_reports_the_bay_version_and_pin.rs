@@ -5,9 +5,6 @@
 //! The newest release comes only from the last recorded check; doctor makes no network call
 //! for it.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, result_json, row};

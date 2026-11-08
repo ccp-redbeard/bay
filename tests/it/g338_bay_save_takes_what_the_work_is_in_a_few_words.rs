@@ -13,9 +13,6 @@
 //! - `src/save.rs` `save_in`'s empty-intent refusal: back to "an intent: a card, issue or ticket
 //!   id" (the refusal names a ticket).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json, unchecked_files};

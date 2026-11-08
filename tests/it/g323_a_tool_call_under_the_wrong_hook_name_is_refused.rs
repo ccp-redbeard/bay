@@ -17,9 +17,6 @@
 //! - `src/agent_hook.rs` `dispatch_as`: `invalid_payload(.., true)` to `false` (the refusal
 //!   says to update bay, not to rewrite the entry).
 
-// Each case runs `bay hook` as the product does, with the payload on stdin; Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

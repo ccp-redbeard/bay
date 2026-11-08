@@ -12,9 +12,6 @@
 //! `waits_for_a_worker` (`false`: the red check waits the hour and stays red; `true`: the green
 //! one runs too); in `unavailable_wait`, the shorter wait of a check that holds.
 
-// Each case runs shell scripts (the adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

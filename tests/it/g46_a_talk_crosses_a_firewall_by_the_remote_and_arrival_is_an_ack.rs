@@ -15,9 +15,6 @@
 //! Later parts of G46 (the `SessionStart`
 //! notice, the draft left alone) come with the hook notices.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::{Value, json};
@@ -633,7 +630,7 @@ fn a_talk_takes_at_most_sixty_four_entries() {
 /// An `ssh-keygen` on the box's `PATH` that logs each signature check (`-Y verify`, `-Y
 /// find-principals`) the host's hook runs, then runs the real one. The log's path.
 fn log_signature_checks(case: &TalkCase) -> std::path::PathBuf {
-    let out = std::process::Command::new("sh")
+    let out = crate::support::sh()
         .args(["-c", "command -v ssh-keygen"])
         .output()
         .unwrap();
@@ -645,9 +642,7 @@ fn log_signature_checks(case: &TalkCase) -> std::path::PathBuf {
     );
     let path = case.test_box.fakebin.join("ssh-keygen");
     std::fs::write(&path, script).unwrap();
-    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-    std::fs::set_permissions(&path, permissions).unwrap();
+    crate::support::set_executable(&path);
     log
 }
 

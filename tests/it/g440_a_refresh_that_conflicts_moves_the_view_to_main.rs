@@ -11,9 +11,6 @@
 //! stays on the old base and holds no markers) and `markers_left_at_submit` in `submit_land`
 //! (`src/publish.rs`; the unresolved merge is not refused and the markers reach main).
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

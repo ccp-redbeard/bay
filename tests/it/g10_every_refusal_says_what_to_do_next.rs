@@ -3,9 +3,6 @@
 //! Every reason code in bay's table (`INTERFACES` § 2) returns `allowed` and `retry_when`; a
 //! repeated unchanged retry is refused without work.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use bay::result::{BayResult, Reason};

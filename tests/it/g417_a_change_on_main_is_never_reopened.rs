@@ -7,8 +7,6 @@
 //! Guard to mutate: `src/start.rs` `resume`: drop the landed check (a merge of a new edit on a
 //! landed change was refused already; the edit got queued only once a start had reopened it).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, result_json, unchecked_files};

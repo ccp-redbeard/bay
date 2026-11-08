@@ -13,9 +13,6 @@
 //! - `src/publish.rs` `fails_as_before`: drop the compare of the two candidates' failing units
 //!   (the failure whose reason changed is refused unrun: the third case).
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

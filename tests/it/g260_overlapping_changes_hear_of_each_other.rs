@@ -10,9 +10,6 @@
 //! the paths, at its next `step.end`, through the notice path of the refusals and failed
 //! checks, and never again in that session.
 
-// Each case runs the hook with a wrapper on PATH, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

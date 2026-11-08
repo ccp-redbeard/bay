@@ -5,9 +5,6 @@
 //! is the one its `[[check]]` entry in `.bay/policy.toml` names, judged at the accepted base and
 //! hashed into its definition digest, so no second home outside the policy can change what runs.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json, row, write_executable};

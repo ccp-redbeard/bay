@@ -10,8 +10,6 @@
 //! Guard to mutate, in `src/publish.rs`: the G554 return in `batch_plan` (the change behind the
 //! document lands in the document's batch).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::time::Duration;

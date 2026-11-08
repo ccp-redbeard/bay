@@ -5,8 +5,6 @@
 //!
 //! Guard to mutate: `src/log.rs` `fetch`: fetch this runner's own log with the rest, forced.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

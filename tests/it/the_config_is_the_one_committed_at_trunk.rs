@@ -8,8 +8,6 @@
 //! is `CONFIG_MISSING`: never a silent default. The shell deny list (G39) judges a push against
 //! that same trunk.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write as _;
@@ -117,11 +115,11 @@ fn a_draft_config_changes_nothing_uncommitted_or_committed_in_the_change() {
     let decoy = test_box.path().join("decoy-executor");
     support::write_executable(
         &decoy,
-        &format!("#!/bin/sh\ntouch {}\nexit 1\n", mark.display()),
+        &format!("#!/bin/sh\ntouch '{}'\nexit 1\n", support::sh_path(&mark)),
     );
     let draft = format!(
         "main = \"elsewhere\"\n\n[policy]\nevidence_reuse = \"exact-inputs\"\n\n[runner]\ncommand = \"{}\"\n",
-        decoy.display()
+        support::sh_path(&decoy)
     );
     // Uncommitted in the main work tree.
     TestBox::bay_config(&repo, &draft);

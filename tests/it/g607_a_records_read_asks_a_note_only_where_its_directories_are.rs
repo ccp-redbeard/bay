@@ -8,10 +8,6 @@
 //! asks each note at all 20 fanouts; stop after the first level, and a note two directories deep
 //! is never read.
 
-// The landing runs a shell check adapter, and the case puts a shell wrapper for `git` on PATH,
-// so it runs on Unix only.
-#![cfg(unix)]
-
 use crate::g196_evidence_reads_spawn_a_constant_number_of_git_processes::{fanned_note, landed};
 
 use std::collections::BTreeMap;

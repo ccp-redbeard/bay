@@ -13,9 +13,6 @@
 //! the journal is silent again), and the `Stage::Post` test in `Policy::commit_keyed_woken`
 //! (drop it and a post check keeps every batch off).
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::PRODUCER;

@@ -136,7 +136,7 @@ impl Release {
         .unwrap();
         std::fs::set_permissions(&gh, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-        let out = Command::new("sh")
+        let out = crate::support::sh()
             .arg("scripts/release.sh")
             .args(args)
             .current_dir(self.repo())

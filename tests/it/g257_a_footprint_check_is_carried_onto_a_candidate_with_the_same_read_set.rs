@@ -16,9 +16,6 @@
 //! the read-set case then lands on a record about other bytes; for one change, either digest
 //! implies the other), and `throughput::disjoint` (always false: no pre-check runs).
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

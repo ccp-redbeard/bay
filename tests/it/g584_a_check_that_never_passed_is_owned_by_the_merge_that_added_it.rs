@@ -14,9 +14,6 @@
 //! landing that added the check before any landing requires it. Guard to mutate, in
 //! `src/red.rs`: `Answers::clear_past` without the `unlisted` arm (it is `pending_beyond_window`).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

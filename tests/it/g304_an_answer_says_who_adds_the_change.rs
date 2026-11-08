@@ -16,9 +16,6 @@
 //! - `src/approve.rs` `approve_in`: `"lands_by": lands_by,` dropped from the approval's detail
 //!   (the approval and the no carry no `lands_by`).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::approval::{trunk, trunk_with};

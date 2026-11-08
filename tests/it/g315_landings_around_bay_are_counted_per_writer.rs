@@ -12,9 +12,6 @@
 //! - `src/unattributed.rs` `scan`: drop `"by_writer": by_writer(writers),` (no `by_writer`).
 //! - `src/unattributed.rs` `by_writer`: `b.1.cmp(&a.1)` to `a.1.cmp(&b.1)` (the fewest first).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

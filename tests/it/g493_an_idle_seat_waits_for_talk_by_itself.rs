@@ -10,8 +10,6 @@
 //! Guards to mutate: `src/agent_settings.rs` the `("Stop", "talk-wait")` row and the
 //! `asyncRewake` field; `src/agent_hook.rs` `one_wait`; `src/talk/poll.rs` the `off` return.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

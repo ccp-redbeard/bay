@@ -8,9 +8,6 @@
 //! without its fetch of trunk). The hook never waits for it: one detached `bay live checkpoint`
 //! does the work, and the session's line names it (`checkpoint`).
 
-// Each case runs the hook as a process with a payload on stdin, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

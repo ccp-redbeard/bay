@@ -10,9 +10,6 @@
 //! is never found red). G433: the check the box ran longest ago goes first; order by pending
 //! alone in `bisect::in_turn` and a check that never answers runs on every tip.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

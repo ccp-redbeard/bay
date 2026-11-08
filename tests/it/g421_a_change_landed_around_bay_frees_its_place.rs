@@ -10,9 +10,6 @@
 //! The guard to mutate: the block in `scanned` (`src/publish.rs`) that records the refusal;
 //! drop it and the change behind never lands.
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::PRODUCER;

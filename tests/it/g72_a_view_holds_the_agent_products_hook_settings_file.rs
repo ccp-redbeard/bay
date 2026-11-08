@@ -6,15 +6,11 @@
 //! sparse set therefore adds that one file, at the path the adapter names, when the file exists
 //! at the view's base. The file is bay's, not the change's: it is never an observed input.
 
-// Each case runs shell scripts (a wrapper on PATH, the installed hook command), so these run
-// on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::{Value, json};
 use support::TestBox;
@@ -75,18 +71,11 @@ fn session_start_from_view(test_box: &TestBox, view: &Path, session: &str) -> Op
         .to_owned();
     let payload = json!({"session_id": session, "hook_event_name": "SessionStart",
         "source": "startup", "cwd": view});
-    let mut child = Command::new("sh")
+    let mut child = crate::support::sh()
         .args(["-c", &command])
         .current_dir(view)
         .env_clear()
-        .env(
-            "PATH",
-            format!(
-                "{}:{}:/bin:/usr/bin",
-                test_box.fakebin.display(),
-                test_box.local_bin().display()
-            ),
-        )
+        .env("PATH", test_box.path_var())
         .env("HOME", &test_box.home)
         .env("GIT_CONFIG_GLOBAL", &test_box.global_config)
         .env("GIT_CONFIG_NOSYSTEM", "1")

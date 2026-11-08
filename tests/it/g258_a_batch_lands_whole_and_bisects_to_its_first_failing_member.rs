@@ -15,9 +15,6 @@
 //! culprit lands), `throughput::roles` (accept a partial batch), and the rate test in
 //! `batch_plan` (never refuse a batch).
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

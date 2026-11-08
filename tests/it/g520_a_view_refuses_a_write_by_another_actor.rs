@@ -31,9 +31,6 @@
 //! - `src/deny.rs` `commit_dirs_in`: a literal `cd` moves the commit's directory (removed: the
 //!   `cd … && git commit` case is allowed).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write as _;

@@ -4,9 +4,6 @@
 //! judge, so it never counts as evidence here, even when its producer signed it: unknown is
 //! never pass. The record stays on its note for the bay that knows it.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use bay::evidence::{self, EvidenceRecord};

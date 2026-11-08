@@ -12,9 +12,6 @@
 //! and a newer `unknown` lands; a commit-keyed failure on commit A does not block commit B
 //! with the same tree; and a pass on one environment does not satisfy a second one.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

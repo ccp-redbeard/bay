@@ -19,9 +19,6 @@
 //! - `Config::validate_targets` in `src/config.rs`, `freeze.target != trunk &&`: drop it, and a
 //!   freeze of the trunk is refused as naming no `[[target]]`, so bay cannot read the config.
 
-// Each case runs shell scripts (the hold adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

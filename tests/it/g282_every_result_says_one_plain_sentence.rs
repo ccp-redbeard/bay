@@ -12,9 +12,6 @@
 //! `Reason::say` (put "commit" in its sentence: the failed-check case fails on the word); and
 //! `to_human`'s `vec![self.say(), ...]` (drop `self.say()`: the human-rendering case fails).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

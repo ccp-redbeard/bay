@@ -15,9 +15,6 @@
 //! (no request names the third). In `early_conflict_wake`: drop the held-event test, with a
 //! standing conflict noted again, and the wake repeats.
 
-// The check runs a shell script through the relay, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

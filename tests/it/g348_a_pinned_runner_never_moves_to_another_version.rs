@@ -48,7 +48,7 @@ fn a_pinned_runner_stays_on_its_version_when_its_binary_becomes_another() {
     );
     let runner = test_box.clone_of(&remote, "runner");
     std::fs::create_dir_all(test_box.local_bin()).unwrap();
-    let installed = test_box.local_bin().join("bay");
+    let installed = test_box.local_bin().join(crate::support::BAY_EXE);
     std::fs::copy(env!("CARGO_BIN_EXE_bay"), &installed).unwrap();
     let version = String::from_utf8(
         Command::new(&installed)
@@ -111,11 +111,7 @@ fn a_pinned_runner_stays_on_its_version_when_its_binary_becomes_another() {
 
 /// The installed bay running a runner loop on `runner`, pinned to `pin` as a supervisor pins it.
 fn looping(test_box: &TestBox, installed: &Path, runner: &Path, pin: &str) -> Reaped {
-    let path = format!(
-        "{}:{}:/bin:/usr/bin",
-        test_box.fakebin.display(),
-        test_box.local_bin().display()
-    );
+    let path = test_box.path_var();
     Reaped(
         Command::new(installed)
             .arg("-C")

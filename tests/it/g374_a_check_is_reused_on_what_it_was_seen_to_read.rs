@@ -12,8 +12,6 @@
 //! - `src/throughput.rs` `same_observed`: answer `true` at once (a changed listing is carried).
 //! - `src/check.rs` `run_once`: never arm (no observed footprint: nothing is carried).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;
@@ -77,6 +75,10 @@ fn queue(head_touches_lib: bool) -> Held {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a check's observed reads are not carried; under investigation"
+)]
 fn a_record_whose_observed_reads_are_unchanged_is_carried() {
     let held = queue(false);
     let requests = held.requests();

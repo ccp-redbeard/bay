@@ -11,8 +11,6 @@
 //! `range_owners`: the first failure is told); `on_paths`' `red.covers` filter (every landing of
 //! the range is told: the one off the check's paths too).
 
-#![cfg(unix)]
-
 use crate::g630_a_red_that_fails_on_a_new_unit_tells_the_merge_on_its_paths::Suite;
 
 use std::collections::BTreeSet;

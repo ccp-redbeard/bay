@@ -13,9 +13,6 @@
 //! `src/presence.rs` `Beat::during`: drop the ticker's `publish` (the presence's time stays put
 //! while the check runs).
 
-// The check is a shell script, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

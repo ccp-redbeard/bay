@@ -8,9 +8,6 @@
 //! signed bytes. A record over the size limit is refused, never cut. A `review` record is
 //! signed by the box's reviewer key, and only by it (Q12).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -278,7 +275,7 @@ fn refuse_notes_pushes(remote: &Path) -> PathBuf {
     let hook = remote.join("hooks/pre-receive");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
     std::fs::write(&hook, "#!/bin/sh\ngrep -q refs/notes/ && exit 1\nexit 0\n").unwrap();
-    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    crate::support::set_executable(&hook);
     hook
 }
 

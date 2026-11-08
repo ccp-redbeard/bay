@@ -5,9 +5,6 @@
 //! session blocked answers `skipped` / `SESSION_BLOCKED`; one that hangs is recorded `uncertain` /
 //! `WAKE_ADAPTER_FAILED` within the bound, and the accept still writes the ack.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;
@@ -23,8 +20,7 @@ fn with_wake() -> TalkCase {
         let script = a.join("scripts/bay-wake");
         std::fs::create_dir_all(script.parent().unwrap()).unwrap();
         std::fs::write(&script, WAKE).unwrap();
-        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        crate::support::set_executable(&script);
         test_box.seed_trunk(
             a,
             &[
@@ -85,6 +81,10 @@ fn a_blocked_session_is_recorded_skipped_and_the_sender_sees_it() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a timing bound this machine's process starts miss; under investigation"
+)]
 fn a_hung_adapter_is_dropped_within_the_bound_and_the_ack_is_written() {
     let case = with_wake();
     let id = send(&case);

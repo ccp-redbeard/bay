@@ -16,9 +16,6 @@
 //! - `src/talk/standing.rs` `followed`: `reply` read as `Value::Null`.
 //! - `src/watch.rs` `talk_events`: the two event fields left out.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::{Value, json};

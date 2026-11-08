@@ -13,9 +13,6 @@
 //! excluded directory finds its check named); `holds_policy` returning `false` (the policy case),
 //! and in `src/start.rs` `say_pre_merge`, the `after` test (the case of a change after another).
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};

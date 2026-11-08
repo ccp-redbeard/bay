@@ -10,8 +10,6 @@
 //! and the wait is visited each pass; `src/result.rs` `Reason::say`: drop the stopped branch,
 //! and the say names the change as not submitted.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::{BufRead as _, BufReader};

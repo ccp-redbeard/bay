@@ -11,9 +11,6 @@
 //! Guards to mutate, in `src/red.rs`: `judged_old` always `false` (`both` is named culprit), or
 //! always `true` (a landing that did not change the check is never named culprit).
 
-// Each case runs shell scripts (the adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

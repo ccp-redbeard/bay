@@ -9,9 +9,6 @@
 //! loses the claim itself (`two_executors_on_one_operation_publish_it_once`, both held just
 //! before their claim and released together). No case accepts a third answer.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -9,9 +9,6 @@
 //! file or a commit of its own, a locked worktree, a directory that is no worktree, the view the
 //! caller stands in and the view of a change that has not ended are all kept.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 
 use crate::support;

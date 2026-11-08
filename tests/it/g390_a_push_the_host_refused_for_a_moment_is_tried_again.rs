@@ -8,11 +8,7 @@
 //!
 //! Guard to mutate, in `src/git.rs`: `host_refused` returning `false` (the first case fails).
 
-#![cfg(unix)]
-
 use crate::support;
-
-use std::os::unix::fs::PermissionsExt as _;
 
 use support::{TestBox, result_json, unchecked_files};
 
@@ -28,11 +24,11 @@ fn refusing(test_box: &TestBox, times: u32) -> std::path::PathBuf {
         &hook,
         format!(
             "#!/bin/sh\nwhile read old new name; do\n  case \"$name\" in refs/bay/changes/*)\n    n=$(cat {count} 2>/dev/null || echo 0)\n    if [ \"$n\" -lt {times} ]; then echo $((n+1)) > {count}; echo \"error: the hosting check could not finish\" >&2; exit 1; fi;;\n  esac\ndone\nexit 0\n",
-            count = count.display()
+            count = crate::support::sh_path(&count)
         ),
     )
     .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::support::set_executable(&hook);
     repo
 }
 

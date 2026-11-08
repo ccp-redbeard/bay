@@ -10,9 +10,6 @@
 //! rebuilds in place: the second case fails); `batch`'s `Err` arm that yields (a batch refused
 //! by a moved main is a fault, and its members land one by one: the first case fails).
 
-// Each case runs shell scripts (adapters, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

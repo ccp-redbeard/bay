@@ -6,9 +6,6 @@
 //! changed them, from local refs only (the trunk tracking ref; no fetch). The notice is given
 //! once per session for one trunk state, and recorded on the session's line.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

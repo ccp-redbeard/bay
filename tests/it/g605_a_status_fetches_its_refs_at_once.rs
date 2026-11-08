@@ -7,9 +7,6 @@
 //! Guard to mutate: `src/status.rs` `fetch_all`: join each fetch as soon as it is spawned, and
 //! no two fetches are ever in flight at once.
 
-// The case puts a shell wrapper for `git` on PATH, so it runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

@@ -2,9 +2,6 @@
 //!
 //! The same op id is sent with a different request digest: refused, no new work.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use bay::change::Chain;

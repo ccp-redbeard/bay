@@ -12,9 +12,6 @@
 //! head reads the range again); keep the answers of a landing whose notes moved (covered by
 //! G482's second case for the window, the same filter).
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

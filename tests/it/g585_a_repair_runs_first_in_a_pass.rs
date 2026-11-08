@@ -6,8 +6,6 @@
 //! Guard to mutate, in `src/executor.rs`: `in_pass_order` without its repair clause (a repair
 //! keeps its turn after the changes submitted before it).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

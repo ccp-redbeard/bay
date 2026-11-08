@@ -23,9 +23,6 @@
 //! - `src/policy.rs` `read_at`: `reuse_unsigned: file.policy.reuse_unsigned` to
 //!   `reuse_unsigned: false` (every keyed case runs as its control).
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

@@ -8,9 +8,6 @@
 //! Guard to mutate: the `starved` term of the sort key in `bisect::in_turn` (`src/bisect.rs`);
 //! drop it and the red check runs on every tip, and `lint` on none.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

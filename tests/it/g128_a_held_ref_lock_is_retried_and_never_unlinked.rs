@@ -6,9 +6,6 @@
 //! uncounted toward `MAIN_MOVED`. A lock that is never released ends the operation
 //! `MERGE_RETRY_EXHAUSTED`, a stated refusal, and the lock is still where its owner left it.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 

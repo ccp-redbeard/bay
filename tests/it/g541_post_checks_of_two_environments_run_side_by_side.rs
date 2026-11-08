@@ -14,8 +14,6 @@
 //! later pass, behind `slow`); in `src/executor.rs` `post_pass`, run each piece on the pass's own
 //! thread (`fast` starts only once `slow` ends).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Read as _;

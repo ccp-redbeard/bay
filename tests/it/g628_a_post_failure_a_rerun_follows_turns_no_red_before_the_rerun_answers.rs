@@ -17,9 +17,6 @@
 //! (`moved.trees`: the third case again). A rerun that answers nothing ends the wait (g580).
 //! `Last::stands`, which keeps a runner's judgement in its process, has its own unit test.
 
-// Each case runs shell scripts (the adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

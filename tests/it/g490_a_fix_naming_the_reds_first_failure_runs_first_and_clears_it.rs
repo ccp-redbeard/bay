@@ -10,8 +10,6 @@
 //! Guards to mutate: `src/red.rs` `Red::answered_by` without the first failure (the fix waits),
 //! and `red`'s clear by a later landing that names the first failure (main stays red).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::queued::{Check, Trust, host_under};

@@ -8,9 +8,6 @@
 //! on the chain read before the block claims the operation again). In `src/executor.rs`,
 //! `unchanged` judged by the reason again fails its unit test.
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

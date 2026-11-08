@@ -11,16 +11,16 @@
 //! start (#43, which flaked this test). Guard to mutate, in `src/start.rs`: the `ref_moved`
 //! retry in `adopt_or_refuse`.
 
-#![cfg(unix)]
-
-use std::os::unix::fs::PermissionsExt;
-
 use crate::support;
 
 use support::PRODUCER;
 use support::queued::{Check, OTHER_PRODUCER, finished, host};
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a runner's queue handling differs; under investigation"
+)]
 fn a_new_revision_of_the_head_runs_from_the_heads_place() {
     let held = host(&Check {
         config: "[runner]\nlease_s = 30\nheartbeat_s = 1\n",
@@ -88,14 +88,18 @@ fn an_adoption_whose_push_meets_a_moved_chain_reads_it_again() {
         ),
     )
     .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::support::set_executable(&hook);
     held.test_box.git_bare(
         &held.remote,
         &["config", "hook.refuse-once.event", "update"],
     );
     held.test_box.git_bare(
         &held.remote,
-        &["config", "hook.refuse-once.command", hook.to_str().unwrap()],
+        &[
+            "config",
+            "hook.refuse-once.command",
+            &crate::support::sh_path(&hook),
+        ],
     );
     let started = held.test_box.bay_ok(&held.repo, &["start", "one"]);
     assert_eq!(started["change"], one.as_str(), "{started}");

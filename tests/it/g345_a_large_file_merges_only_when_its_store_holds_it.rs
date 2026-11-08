@@ -15,9 +15,6 @@
 //! - `src/assets.rs` `fill`: take `Got::Purged` as an error (the clone's install fails).
 //! - `src/assets.rs` `AssetsPolicy::validate`: drop the `days == 0` refusal.
 
-// Each case runs shell scripts (a plugin), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::g340_a_large_file_saved_never_enters_git::{
     STORE_PLUGIN, sha256_hex, store, trunk, trunk_with, video,
 };
@@ -27,7 +24,7 @@ use support::{UNCHECKED_POLICY, result_json};
 
 /// A store that says it stored the bytes and keeps none.
 const LEAKY_PLUGIN: &str = r#"#!/bin/sh
-hash() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+hash() { if command -v sha256sum >/dev/null; then sha256sum < "$1"; else shasum -a 256 < "$1"; fi | cut -d' ' -f1; }
 case "$2" in
   put) echo "sha256:$(hash "$3")" ;;
   exists) exit 1 ;;
@@ -61,7 +58,9 @@ fn a_purged_file_keeps_its_address_and_a_clone_names_it() {
     let manifest = test_box.git_bare(&remote, &["show", "main:.bay-assets"]);
 
     // The store's operator purges one file's bytes.
-    let purged = std::process::Command::new(repo.join("scripts/assets"))
+    let purged = crate::support::sh()
+        .env("PATH", test_box.path_var())
+        .arg(repo.join("scripts/assets"))
         .args([
             store(&test_box).to_str().unwrap(),
             "purge",
@@ -134,7 +133,9 @@ fn a_purge_never_blocks_a_later_merge() {
     std::fs::write(repo.join("renders/r1.bin"), &render).unwrap();
     let (code, saved) = result_json(test_box.bay(&repo).args(["save", "a render"]));
     assert_eq!(code, 0, "{saved}");
-    let purged = std::process::Command::new(repo.join("scripts/assets"))
+    let purged = crate::support::sh()
+        .env("PATH", test_box.path_var())
+        .arg(repo.join("scripts/assets"))
         .args([
             store(&test_box).to_str().unwrap(),
             "purge",

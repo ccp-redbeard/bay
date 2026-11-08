@@ -9,14 +9,11 @@
 //! still denies. A re-install replaces the bare entry an earlier bay wrote, and doctor still
 //! recognises both forms as bay's.
 
-// Each case runs shell scripts (the hook entry, a fake bay on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::{Value, json};
 use support::{TestBox, result_json, row, write_executable};
@@ -66,7 +63,7 @@ fn run_entry(
 ) -> Option<i32> {
     let payload = json!({"hook_event_name": "PreToolUse", "tool_name": "Bash",
         "tool_input": {"command": shell}, "cwd": repo, "session_id": "s-g169"});
-    let mut child = Command::new("/bin/sh")
+    let mut child = crate::support::sh()
         .args(["-c", command])
         .current_dir(repo)
         .env_clear()
@@ -126,12 +123,8 @@ fn the_entry_exits_zero_without_bay_and_is_bays_where_bay_resolves() {
     );
 
     // The real bay, as installed, and a command on its deny list: bay's deny exit.
-    let real = format!(
-        "{}:{}:/bin:/usr/bin",
-        test_box.fakebin.display(),
-        test_box.local_bin().display()
-    );
-    assert!(test_box.local_bin().join("bay").is_file());
+    let real = test_box.path_var();
+    assert!(test_box.local_bin().join(crate::support::BAY_EXE).is_file());
     assert_eq!(
         run_entry(&test_box, &repo, &command, &real, "git reset --hard"),
         Some(2),

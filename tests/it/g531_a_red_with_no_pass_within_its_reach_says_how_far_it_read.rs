@@ -7,9 +7,6 @@
 //! beyond it is found); `Answers::suspect` gives no `searched` depth (the row says nothing of
 //! how far it read).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

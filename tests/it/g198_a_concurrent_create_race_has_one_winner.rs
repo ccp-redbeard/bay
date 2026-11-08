@@ -8,9 +8,6 @@
 //! clones in the test's object and ref formats (`BAY_TEST_FORMATS`), so it holds on files and on
 //! reftable.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::BTreeSet;

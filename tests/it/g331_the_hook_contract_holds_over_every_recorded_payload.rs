@@ -15,9 +15,6 @@
 //! Guard to mutate: `src/agent_settings.rs` `entry_shape`: the `PreToolUse` arm's
 //! `blocks: true` to `false` (a deny at `tool.before`, declared as not blocking).
 
-// Each case runs `bay hook` with a payload on stdin and a fake product on PATH; Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;
@@ -46,7 +43,12 @@ fn payload(file: &Path, repo: &Path) -> Value {
             }
         }
     }
-    let text = value.to_string().replace("<repo>", &root);
+    // The path goes into JSON text, so as a JSON string's contents: a Windows path's `\`
+    // escaped.
+    let quoted = serde_json::to_string(&root).unwrap();
+    let text = value
+        .to_string()
+        .replace("<repo>", &quoted[1..quoted.len() - 1]);
     serde_json::from_str(&text).unwrap()
 }
 
@@ -95,6 +97,10 @@ fn run_hook(
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a timing bound this machine's process starts miss; under investigation"
+)]
 fn every_recorded_payload_gets_a_declared_answer_in_time() {
     let test_box = TestBox::new();
     // `bay_ok` adds `--json`: this is `bay help --json`.

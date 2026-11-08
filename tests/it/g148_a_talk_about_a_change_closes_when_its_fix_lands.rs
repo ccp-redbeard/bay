@@ -10,9 +10,6 @@
 //! `answered` close whose landing does not name the talk's change, or is not that change's
 //! publication.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

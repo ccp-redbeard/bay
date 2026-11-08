@@ -1,9 +1,6 @@
 //! Item 9a demonstration: an agent submits, disconnects, and returns to a published change or
 //! a precise repair request (`ROADMAP` § 2, increment 1).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};
@@ -103,11 +100,7 @@ fn a_configured_executor_admits_the_submission_with_a_job_handle() {
         "[runner]\ncommand = \"scripts/executor\"\n".to_owned(),
     ));
     test_box.seed_with_check(&repo, &[("src/a.rs", "fn a() {}\n")], &files);
-    std::fs::set_permissions(
-        repo.join("scripts/executor"),
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
+    crate::support::set_executable(&repo.join("scripts/executor"));
     let (id, view) = test_box.start_and_edit(&repo);
     let (code, queued) = result_json(test_box.bay(&view).arg("merge"));
     assert_eq!(code, 0, "{queued}");

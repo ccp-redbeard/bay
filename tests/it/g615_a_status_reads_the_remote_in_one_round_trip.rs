@@ -15,9 +15,6 @@
 //! the copy the remote no longer holds is kept; take this store's own notes, and they are
 //! fetched over.
 
-// The remote that refuses every push is a shell script, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -238,9 +235,7 @@ fn work_of_this_store_a_remote_refuses_is_kept() {
     // The remote now refuses every push, so the receipts' sync cannot take the state there.
     let refuse = test_box.path().join("refuse-receive-pack");
     std::fs::write(&refuse, "#!/bin/sh\nexit 1\n").unwrap();
-    let mut mode = std::fs::metadata(&refuse).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
-    std::fs::set_permissions(&refuse, mode).unwrap();
+    crate::support::set_executable(&refuse);
     test_box.git_ok(
         &reader,
         &[

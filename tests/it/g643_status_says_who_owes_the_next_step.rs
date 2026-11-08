@@ -14,9 +14,6 @@
 //! session found five overdue ones only by reading raw refs). Guard to mutate, in `src/status.rs`
 //! `talks_owed`: the `owes` test (the sender reads the talk as owed).
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 
 use crate::support;

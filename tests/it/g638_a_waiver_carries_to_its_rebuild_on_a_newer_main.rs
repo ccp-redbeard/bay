@@ -29,9 +29,6 @@
 //! - `src/publish.rs` `fetch_for_carry`: drop the fetch (the refreshed change's merge never sees
 //!   the waiver, and it stays `CHECK_FAILED`: the sixth case).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

@@ -19,9 +19,6 @@
 //! - `Repo::fetch_chains` (`src/repo.rs`): make the executor pass's batch refspec forced
 //!   (`+{prefix}*:{prefix}*`) (the pass whose sync is refused fails).
 
-// Each case runs shell scripts (adapters, a hook, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -161,8 +158,7 @@ fn an_executor_pass_whose_push_is_refused_keeps_the_unpushed_commit() {
     )
     .unwrap();
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::support::set_executable(&hook);
     }
     // The pass's own outcome is not this card's: only what it did to the chain ref is.
     let _ = test_box

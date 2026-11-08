@@ -10,9 +10,6 @@
 //! Guard to mutate: `src/start.rs` `declared_paths`: return `paths` unchanged (the new file is
 //! refused).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

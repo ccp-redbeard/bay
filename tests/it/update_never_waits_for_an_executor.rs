@@ -156,11 +156,7 @@ fn an_executor_moves_to_its_new_binary_between_passes() {
     std::fs::create_dir_all(&bin).unwrap();
     let bay = bin.join("bay");
     std::fs::copy(env!("CARGO_BIN_EXE_bay"), &bay).unwrap();
-    let path = format!(
-        "{}:{}:/bin:/usr/bin",
-        test_box.fakebin.display(),
-        test_box.local_bin().display()
-    );
+    let path = test_box.path_var();
     let mut child = Reaped(
         Command::new(&bay)
             .arg("-C")

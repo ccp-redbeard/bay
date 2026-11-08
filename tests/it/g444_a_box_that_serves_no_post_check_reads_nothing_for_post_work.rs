@@ -16,9 +16,6 @@
 //! `bisect::culprits` (`src/bisect.rs`; the first case judges), and the pass's `fetch_evidence` before
 //! its visits in `executor::pass` (`src/executor.rs`; the second case lands on a red main).
 
-// Each case runs shell scripts (the adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

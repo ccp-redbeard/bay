@@ -7,9 +7,6 @@
 //! operation reaches its outcome (landed, failed or abandoned), no push carries one to the
 //! remote, and `bay status` lists one whose operation ended or is gone as a leftover.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

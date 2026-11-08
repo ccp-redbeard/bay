@@ -8,9 +8,6 @@
 //! naming `HOOK_INPUT_INVALID`. Every recorded `PreToolUse` payload keeps its old answer, and
 //! the events that only record keep allowing an unreadable payload.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

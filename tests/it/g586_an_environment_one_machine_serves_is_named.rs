@@ -66,6 +66,10 @@ fn queue_and_read(test_box: &TestBox, repo: &Path) -> Value {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a runner's queue handling differs; under investigation"
+)]
 fn queued_work_names_the_environment_one_machine_serves() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");

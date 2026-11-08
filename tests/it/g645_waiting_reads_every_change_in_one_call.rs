@@ -6,9 +6,6 @@
 //! The guard to mutate, in `src/approve.rs` `records`: one read per record in place of
 //! `records_at` (the calls grow).
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 
 use crate::support;

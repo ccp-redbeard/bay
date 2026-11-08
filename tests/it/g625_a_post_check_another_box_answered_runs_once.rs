@@ -10,9 +10,6 @@
 //! chain in `bisect::last_runs`; drop it and the second box's run on the next tip asks about every
 //! landing since the span's start, not since the first box's answer.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

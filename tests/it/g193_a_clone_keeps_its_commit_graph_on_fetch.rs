@@ -6,9 +6,6 @@
 //! since a fetch's write only keeps filters the graph already has. After a fetch, the graph
 //! verifies and a path-limited walk from the fetched tip reads a filter for every commit.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use bay::version::Version;

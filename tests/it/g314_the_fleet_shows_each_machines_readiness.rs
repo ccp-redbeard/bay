@@ -21,9 +21,6 @@
 //! - `src/fleet.rs` `ready`: `Some("ok") => green += 1,` to `Some("ok") => red += 1,` (no
 //!   machine counts green).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

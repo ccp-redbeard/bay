@@ -5,8 +5,6 @@
 //!
 //! Guard to mutate, in `src/publish.rs`: `needs_no_check` returning `false`.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::time::Duration;

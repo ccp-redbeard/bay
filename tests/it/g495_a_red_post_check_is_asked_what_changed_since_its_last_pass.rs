@@ -13,9 +13,6 @@
 //! check about the range since its last record, or since the red landing's parent, and the first
 //! case stays red; drop the window fallback and the second does.
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

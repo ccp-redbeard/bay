@@ -6,9 +6,6 @@
 //!
 //! `ROADMAP` § 1; `DESIGN` § 15.2, § 15.3, § 15.4.
 
-// The fake `claude` on PATH is a shell script, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -18,7 +15,9 @@ use support::{TestBox, result_json, row};
 const CLAUDE_ADAPTER: &str = "[agent]\nproduct = \"claude\"\n";
 
 fn source_skill() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("skills/bay")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("skills")
+        .join("bay")
 }
 
 fn config_dir(test_box: &TestBox) -> PathBuf {
@@ -34,7 +33,7 @@ fn install_writes_the_skill_under_the_config_dir_and_doctor_checks_it_there() {
     test_box.commit_config(&repo, CLAUDE_ADAPTER);
     test_box.fake_claude(Some("2.1.302"));
     let dir = config_dir(&test_box);
-    let expected = dir.join("skills/bay");
+    let expected = dir.join("skills").join("bay");
 
     for args in [&["install"][..], &["install", "--machine"][..]] {
         let (code, installed) = result_json(
@@ -87,7 +86,7 @@ fn a_skill_only_under_home_is_missing_when_the_config_dir_is_set() {
     assert_eq!(code, 0, "{result}");
 
     let dir = config_dir(&test_box);
-    let expected = dir.join("skills/bay");
+    let expected = dir.join("skills").join("bay");
     let (code, result) = result_json(
         test_box
             .bay(&repo)
@@ -110,7 +109,7 @@ fn a_skill_only_under_home_is_missing_when_the_config_dir_is_set() {
 fn an_empty_config_dir_is_the_home_default() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
-    let home_skill = test_box.home.join(".claude/skills/bay");
+    let home_skill = test_box.home.join(".claude").join("skills").join("bay");
     let (code, installed) = result_json(
         test_box
             .bay(&repo)
@@ -119,8 +118,8 @@ fn an_empty_config_dir_is_the_home_default() {
     );
     assert_eq!(code, 0, "{installed}");
     assert_eq!(
-        installed["detail"]["skill"],
-        home_skill.display().to_string()
+        crate::support::path_text(installed["detail"]["skill"].as_str().unwrap()),
+        crate::support::path_text(&home_skill)
     );
     let (code, result) = result_json(
         test_box

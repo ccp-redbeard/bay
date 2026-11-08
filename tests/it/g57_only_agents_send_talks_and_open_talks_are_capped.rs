@@ -9,9 +9,6 @@
 //! push or not. Hundreds of closed talks never lock a recipient out, and a retry the host refuses
 //! leaves no local copy to count.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::{Value, json};

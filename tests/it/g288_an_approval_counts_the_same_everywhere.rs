@@ -11,9 +11,6 @@
 //! `approval` record `Verified::Unverifiable`. Make it `Verified::Unsigned` and the target
 //! becomes promotable, the hook takes the push, and the held change lands.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

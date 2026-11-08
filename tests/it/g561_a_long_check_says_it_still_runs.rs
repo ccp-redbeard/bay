@@ -6,9 +6,6 @@
 //! Guard to mutate, in `src/check.rs`: `run_once` calls `within_budget` without `saying_still`
 //! (the long check writes no still line).
 
-// The check is a shell script, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

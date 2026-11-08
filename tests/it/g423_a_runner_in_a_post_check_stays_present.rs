@@ -10,9 +10,6 @@
 //! (`src/executor.rs`); wait for the pieces directly and the presence stands still while the
 //! check runs.
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::time::{Duration, Instant};

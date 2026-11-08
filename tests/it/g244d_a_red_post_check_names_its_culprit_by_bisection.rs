@@ -7,9 +7,6 @@
 //! in at most log2(n) + 1 runs. The pinned landing is the red's `culprit`, and it owns the
 //! red: `bay status` names it, and `MAIN_RED` names its change. Off by default.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -26,9 +26,6 @@
 //! - `src/publish.rs` `verify_publication`: `return !crate::registry::landing_signed(..)` to
 //!   `return false` (an unsigned landing is not read as landed).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

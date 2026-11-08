@@ -15,9 +15,6 @@
 //! live executor is reported missing); `src/session.rs` `notices` calls `no_executor` at
 //! `SessionStart` and at `UserPromptSubmit` (drop either, and that hook says nothing).
 
-// Each case runs shell scripts (the git wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;
@@ -159,6 +156,10 @@ fn queued_work_with_no_executor_is_told_once_per_state() {
 /// fetched again first, so a live runner whose newer presence the record lacks is never
 /// reported missing, which sent seats to start runners of their own.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: the fleet map lists no live sessions; under investigation"
+)]
 fn a_live_runner_is_never_reported_missing_from_an_old_record() {
     // A takeover window of ten seconds: twice this lease.
     let (test_box, repo, executor) = seeded_with(Some("[runner]\nlease_s = 5\nheartbeat_s = 1\n"));

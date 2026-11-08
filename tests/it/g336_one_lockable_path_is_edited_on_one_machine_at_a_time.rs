@@ -17,9 +17,6 @@
 //! - `src/locks.rs` `take_one`: drop the `lock.released` arm (a released lock still holds).
 //! - `src/names.rs` `bay_ref`: drop the `locks` namespace (a bay host refuses the lock).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

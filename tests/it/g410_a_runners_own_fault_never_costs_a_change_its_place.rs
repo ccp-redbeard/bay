@@ -5,8 +5,6 @@
 //!
 //! Guard to mutate: `src/publish.rs` `verify_request_digest`: a read error is a refusal.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::queued::{Check, host};

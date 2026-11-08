@@ -13,8 +13,6 @@
 //! before the run on the fix), or drop the `red.fix.is_some()` (the repair lands while `suite`
 //! is red); in `src/publish.rs` `red_gate`, filter by `answered_by` alone (the repair waits).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

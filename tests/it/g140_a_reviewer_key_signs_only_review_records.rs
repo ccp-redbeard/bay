@@ -10,9 +10,6 @@
 //! namespace) or the agent file (Q7: an author never reviews itself under one name), is refused
 //! where the registry is read.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

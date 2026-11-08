@@ -24,9 +24,6 @@
 //! - `src/talk/wake.rs` line 103, the `not_attempted` answer with no `[plugin.wake] command`: return
 //!   `failed()` instead and the case without a `[plugin.wake]` table fails.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

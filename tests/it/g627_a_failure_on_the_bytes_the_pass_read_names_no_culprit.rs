@@ -17,9 +17,6 @@
 //! the read-set digests not compared (the same); in `src/bisect.rs`, `unconfirmed` always
 //! `false` (no rerun: the flaky red stays) or with no record count (a third run).
 
-// Each case runs shell scripts (the adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

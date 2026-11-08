@@ -13,9 +13,6 @@
 //! - `src/view.rs` `create`: drop the `fill_tree` call (the view has no file).
 //! - `src/check.rs` `prepare`: drop the `fill_check` call (the check reads no file and fails).
 
-// Each case runs shell scripts (a plugin, a check), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::g340_a_large_file_saved_never_enters_git::{
     STORE_PLUGIN, sha256_hex, store, trunk, trunk_with, video,
 };

@@ -14,9 +14,6 @@
 //! names one (both mutated, the renamed session stays the old name); in `src/hook_poll.rs` `start`,
 //! the name given to the child (the talk is never told).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write as _;

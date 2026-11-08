@@ -11,8 +11,6 @@
 //! `src/after.rs` `submitted`: answer `true`, and nothing names the change as not submitted;
 //! `src/result.rs` `Reason::say`: drop the `DependencyPending` branch, and the say names nobody.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::{BufRead as _, BufReader};

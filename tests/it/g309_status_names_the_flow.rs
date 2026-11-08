@@ -19,9 +19,6 @@
 //!   prints the time first: no change has a start, each times from its head, and the cycle
 //!   time is 0).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

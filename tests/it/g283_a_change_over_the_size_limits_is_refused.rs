@@ -15,9 +15,6 @@
 //! executor case lands); and the comparisons in `crate::limits::exceeded`,
 //! `bytes > over_bytes`, `count > max` and `total > max` (make each `false`: its case lands).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 use std::fmt::Write as _;
 

@@ -5,9 +5,6 @@
 //! change. A talk about another change is not listed. The fetch writes no ack, so an unread talk
 //! stays unread, and the verbs never block on a talk.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

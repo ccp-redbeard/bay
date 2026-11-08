@@ -27,9 +27,6 @@
 //! - `src/save.rs`, `save_in`'s `if let Some(change) = repo.view_change(dir)` refusal: drop it
 //!   and the fifth case fails (the refusal no longer names `bay merge`).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

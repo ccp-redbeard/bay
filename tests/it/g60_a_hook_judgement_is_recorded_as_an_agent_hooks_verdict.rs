@@ -7,9 +7,6 @@
 //! deny-list shape's name and the wrapper it was found in, never the command text, which can
 //! carry a secret (AGENT-HOOKS-0.1 § 10.3, a payload-free record).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

@@ -22,9 +22,6 @@
 //! - `src/log.rs` `published_of`: `record["outcome"] == "merged"` (make it `!=`: both are
 //!   null).
 
-// The check is a shell script, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

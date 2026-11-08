@@ -10,13 +10,8 @@
 //! Guard to mutate: `src/assets.rs` `Rule::offloads`: drop the `by_kind` arm (the document enters
 //! Git).
 
-// The store is a shell script, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::g340_a_large_file_saved_never_enters_git::{STORE_PLUGIN, sha256_hex, store};
 use crate::support;
-
-use std::os::unix::fs::PermissionsExt as _;
 
 use support::{TestBox, UNCHECKED_POLICY, result_json};
 
@@ -34,7 +29,7 @@ fn a_small_document_a_glob_names_goes_to_the_store_and_a_note_stays_in_git() {
                 ".bay/config.toml".to_owned(),
                 format!(
                     "[plugin.assets]\ncommand = \"scripts/assets {}\"\n",
-                    store(&test_box).display()
+                    crate::support::sh_path(store(&test_box))
                 ),
             ),
             ("scripts/assets".to_owned(), STORE_PLUGIN.to_owned()),
@@ -44,12 +39,8 @@ fn a_small_document_a_glob_names_goes_to_the_store_and_a_note_stays_in_git() {
             ),
         ],
     );
-    std::fs::set_permissions(
-        repo.join("scripts/assets"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
-    test_box.git_ok(&repo, &["add", "scripts/assets"]);
+    crate::support::set_executable(&repo.join("scripts/assets"));
+    test_box.git_ok(&repo, &["add", "--chmod=+x", "scripts/assets"]);
     test_box.git_ok(&repo, &["commit", "-q", "-m", "the store runs"]);
     test_box.git_ok(&repo, &["push", "-q", "origin", "main"]);
 

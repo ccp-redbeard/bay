@@ -26,9 +26,6 @@
 //! - `src/check.rs`, `base_answer`: the `answers_on_base` lookup (drop it: the second
 //!   candidate runs the check on a base that already has its own record).
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

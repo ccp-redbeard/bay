@@ -6,9 +6,6 @@
 //! Guard to mutate, in `src/disk.rs` `floor`: unset reading `DEFAULT_FLOOR_MIB` (make it 0: the
 //! first case starts); the first case's `floor_mib` holds the number.
 
-// The floor is not judged on Windows.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

@@ -24,9 +24,6 @@
 //! - `src/publish.rs` `approval_detail`: drop `detail["once_approved"] = ...` (the refusal no
 //!   longer says what lands it).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

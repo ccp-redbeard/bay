@@ -10,9 +10,6 @@
 //! whether it is overdue. An overdue quarantine stays in force (`DESIGN` § 7: an end never
 //! changes a judgement by itself).
 
-// Each case runs a check adapter (a shell script), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

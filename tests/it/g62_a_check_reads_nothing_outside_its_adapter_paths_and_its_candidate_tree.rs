@@ -12,8 +12,6 @@
 //! Each case needs the check sandbox. On a machine without one it is skipped, unless
 //! `BAY_REQUIRE_SANDBOX` is set, which the gate sets where `bwrap` is present: then it fails.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::net::TcpListener;

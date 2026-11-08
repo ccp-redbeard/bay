@@ -8,9 +8,11 @@
 //! to each child process), so no test depends on running in a process of its own: none sets an
 //! environment variable or the current directory of the test process.
 
-// Each test runs shell scripts or relies on Unix process semantics, so these run on Unix only.
-#![cfg(unix)]
+// A test file that relies on Unix process semantics carries its own `#![cfg(unix)]`. On
+// Windows the box's fake programs are shell scripts that Git for Windows' sh.exe runs, through
+// the test shim (`examples/sh_shim.rs`).
 
+#[cfg(unix)]
 mod release_fixture;
 mod support;
 

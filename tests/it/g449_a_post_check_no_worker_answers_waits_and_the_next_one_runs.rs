@@ -12,9 +12,6 @@
 //! next pass tries the same check, or stops on it), and the `note_unavailable` of an
 //! unavailable run in `run_at` (nothing waits).
 
-// Each case runs shell scripts (the adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

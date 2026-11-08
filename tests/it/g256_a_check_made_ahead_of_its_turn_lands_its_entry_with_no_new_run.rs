@@ -17,9 +17,6 @@
 //! `throughput::fold` (fold a policy change like any other). `predict`'s own policy test on a
 //! persisted candidate backs `fold`'s: that candidate is the same merge, so either one stops.
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

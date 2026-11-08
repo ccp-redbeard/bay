@@ -10,8 +10,6 @@
 //! Guard to mutate, in `src/publish.rs`: `repair_moved_under` returning `false` (the second
 //! document lands while the repair checks again).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -10,9 +10,6 @@
 //! The guard to mutate: the release read in `queue::replace` (`src/queue.rs`); drop it and the
 //! released place takes the newer revision.
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::queued::{Check, Trust, host_under};

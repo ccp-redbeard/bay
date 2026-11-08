@@ -24,8 +24,6 @@
 //! cases need the check sandbox; on a machine without one they are skipped, unless
 //! `BAY_REQUIRE_SANDBOX` is set.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -26,9 +26,6 @@
 //!   change chain kept moving under the claim. With both mutated, the first case's second
 //!   pass fails the same way, as G35 did.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

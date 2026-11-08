@@ -7,8 +7,6 @@
 //! Guard to mutate, in `src/executor.rs`: the `finished_head` release in `abandoned_head`
 //! (remove it).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::time::Duration;

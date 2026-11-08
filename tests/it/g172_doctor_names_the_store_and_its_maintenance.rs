@@ -6,9 +6,6 @@
 //! maintenance is on, and whether the repository is registered for scheduled maintenance.
 //! Every finding is advisory, never red.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json, row};

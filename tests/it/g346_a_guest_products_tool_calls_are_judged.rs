@@ -10,9 +10,6 @@
 //! Guard to mutate: `src/agent_hook.rs` `dispatch`: drop the `guest::as_claude` translation (the
 //! force push and the locked write go through).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

@@ -11,9 +11,6 @@
 //! carries `Fixes:` is promoted. On a forge, which enforces nothing, the same reading detects a
 //! target moved off the trunk as drift, and `bay status --since` names the move.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

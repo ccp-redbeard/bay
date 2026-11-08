@@ -18,9 +18,6 @@
 //! - `src/start.rs` `names_change`: replace `filter(|id| is_change_id(id))` with
 //!   `filter(|_| false)`: `start_with_a_change_id_resumes_that_change` fails.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::BTreeSet;

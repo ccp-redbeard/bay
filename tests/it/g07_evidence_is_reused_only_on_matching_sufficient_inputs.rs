@@ -10,9 +10,6 @@
 //! it. An input bay cannot identify makes the policy invalid, so nothing runs and nothing is
 //! reused. Each adapter run appends its request to a marker file.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

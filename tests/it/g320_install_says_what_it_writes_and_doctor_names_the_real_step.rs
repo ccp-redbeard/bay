@@ -14,9 +14,6 @@
 //! - `src/doctor.rs` `hooks_recovery`: make `tracked` `false` (a tracked file's recovery says
 //!   "run install again").
 
-// `bay install` and doctor run with a fake `claude` on PATH (a shell script), so Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, result_json, row};

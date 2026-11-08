@@ -5,9 +5,6 @@
 //! never a fetch) and the count of tracked files that differ from HEAD. It is informational:
 //! green, with a note when HEAD is behind or files are modified.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

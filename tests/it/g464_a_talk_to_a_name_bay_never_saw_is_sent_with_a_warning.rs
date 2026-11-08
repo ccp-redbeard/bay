@@ -13,9 +13,6 @@
 //! - `src/talk/send.rs` `unseen`: drop the change-record source (an actor with a change is
 //!   warned), or the sender's own name (a note to oneself is warned).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::{Value, json};

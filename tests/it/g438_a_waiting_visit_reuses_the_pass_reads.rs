@@ -12,9 +12,6 @@
 //! queue gate in `publish::execute_op` (`src/publish.rs`): drop it and the head builds on the
 //! main it read before main moved, and its push is refused once (`main_moved`).
 
-// The cases run a shell adapter, so they run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

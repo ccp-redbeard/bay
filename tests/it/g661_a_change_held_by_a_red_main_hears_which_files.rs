@@ -5,9 +5,6 @@
 //!
 //! Guard to mutate, in `src/publish.rs` `red_gate`: the `op.red_holds` it records.
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

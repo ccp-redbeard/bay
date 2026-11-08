@@ -10,9 +10,6 @@
 //! entry told again when other talk refs move), the refs digest compare in `pending` (nothing
 //! told after the first look), and the write in `mark` (told again at the next prompt).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

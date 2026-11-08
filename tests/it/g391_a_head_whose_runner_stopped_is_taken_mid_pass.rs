@@ -9,8 +9,6 @@
 //! Guard to mutate, in `src/executor.rs`: `abandoned_head` returning `None` (B's pass ends with
 //! the head still A's).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::time::Duration;

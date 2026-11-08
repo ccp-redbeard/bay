@@ -8,9 +8,6 @@
 //! record still works. A note is not canonical bytes (it is the JSON list in append order), so a
 //! rewrite that keeps every record byte for byte, such as one in another order, is accepted.
 
-// The host hook runs as a shell-installed `pre-receive`, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

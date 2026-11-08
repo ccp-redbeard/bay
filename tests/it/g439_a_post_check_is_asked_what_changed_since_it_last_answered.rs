@@ -11,9 +11,6 @@
 //! (`src/bisect.rs`): ask about the last landing alone and the suite answers unknown on a tip
 //! whose last landing did not touch it.
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

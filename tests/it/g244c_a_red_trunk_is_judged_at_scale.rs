@@ -16,9 +16,6 @@
 //! (a window off the check's paths is pending again), and `Answers::clear_past`: drop the
 //! `requires` arm (an unanswered landing past the window is passed over).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

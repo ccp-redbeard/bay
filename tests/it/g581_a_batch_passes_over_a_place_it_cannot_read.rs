@@ -10,9 +10,6 @@
 //! The guard to mutate: the loop in `throughput::read_line` (`src/throughput.rs`); end it at the
 //! first place it cannot read and the members behind that place land alone.
 
-// Each case runs shell scripts (the check adapter, the relay), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::PRODUCER;

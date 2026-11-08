@@ -7,9 +7,6 @@
 //! verifies, and a path-limited walk from the newest tip reads a filter for every commit it
 //! visits.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::TestBox;

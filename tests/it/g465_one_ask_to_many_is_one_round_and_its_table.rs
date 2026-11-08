@@ -17,9 +17,6 @@
 //! - `src/talk/round.rs` `rows`: keep only the talks another one repeats (the row shows the
 //!   recipient's closed talk, not its newest).
 
-// Each case runs the hook as a process with a payload on stdin, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;
@@ -189,6 +186,10 @@ fn live_session(case: &Plain, actor: &str) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: the fleet map lists no live sessions; under investigation"
+)]
 fn to_live_asks_every_live_actor_but_the_sender() {
     let case = Plain::approvals();
     for actor in ["agent", "agent-b", "agent-c"] {

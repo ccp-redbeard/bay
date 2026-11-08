@@ -13,9 +13,6 @@
 //! serves every environment, as before the declaration existed, so an upgrade stops no executor
 //! (`DESIGN` § 7, `INTERFACES` § 7, § 8; rulings-open-questions.md Q4).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

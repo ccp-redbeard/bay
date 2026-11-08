@@ -10,8 +10,6 @@
 //! Guards to mutate, in `src/bisect.rs` `tip_runs`: the `is_red` exception to the `unwoken`
 //! skip (main stays red and the next change on its paths waits).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

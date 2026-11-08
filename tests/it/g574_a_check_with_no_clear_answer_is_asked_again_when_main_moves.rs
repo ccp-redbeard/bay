@@ -11,9 +11,6 @@
 //! waits after main moves), or the bound (a fourth candidate is checked). G644, in `src/result.rs`
 //! `change_say`: drop the `out_of_tries` test (the third-try case reads "Wait for it.").
 
-// Each case runs shell scripts (the adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

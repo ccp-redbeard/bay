@@ -7,9 +7,6 @@
 //! takes Git's own default. Then the core flow runs: start, land through an executor, status,
 //! watch, and the host hook still refuses a rewrite of trunk.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

@@ -9,9 +9,6 @@
 //! `signing_stated_many`, keep `Signing::All` for each batched text, and the landings no longer
 //! count through bay.
 
-// Each landing runs a shell check adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

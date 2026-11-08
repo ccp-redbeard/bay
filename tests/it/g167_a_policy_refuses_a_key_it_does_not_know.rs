@@ -7,9 +7,6 @@
 //! policy on an older bay is refused, never misread. A candidate that adds an unknown key to
 //! its own policy is refused the same way, naming the candidate's policy.
 
-// The landing cases run shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

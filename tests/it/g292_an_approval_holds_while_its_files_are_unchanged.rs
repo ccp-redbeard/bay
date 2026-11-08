@@ -29,9 +29,6 @@
 //! - `src/publish.rs` landing: drop `detail["carried_approvals"] = json!(carried)` (the landing
 //!   no longer names the record it stands on).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

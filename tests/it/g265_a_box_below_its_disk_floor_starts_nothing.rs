@@ -15,9 +15,6 @@
 //! made), and `crate::doctor::gc_log_row`'s `if !file.is_file() {` (make it always return: no
 //! row).
 
-// The floor is not judged on Windows.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

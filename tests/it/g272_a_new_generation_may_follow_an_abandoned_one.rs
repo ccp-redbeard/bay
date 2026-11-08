@@ -24,9 +24,6 @@
 //!   the third case's `bay start` of the abandoned change succeeds.
 //! - start side, `src/start.rs` `add_behind`: the fourth case's `behind` is missing.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

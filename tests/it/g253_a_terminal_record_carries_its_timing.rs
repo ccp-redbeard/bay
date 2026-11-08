@@ -9,9 +9,6 @@
 //! Reading the timing costs a constant number of `git` spawns, however many heartbeats the
 //! chain holds: one walk of the chain's subjects, never one read per state.
 
-// The check moves trunk with a shell script, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;
@@ -172,6 +169,10 @@ fn heartbeats(test_box: &TestBox, remote: &Path, id: &str) -> usize {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a timing bound this machine's process starts miss; under investigation"
+)]
 fn the_timing_costs_the_same_spawns_however_many_heartbeats() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");

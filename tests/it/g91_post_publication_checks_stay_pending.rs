@@ -6,9 +6,6 @@
 //! that commit's tree arrives; then it shows that record's verdict. One check id in both stages
 //! makes the policy invalid.
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

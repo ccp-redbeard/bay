@@ -7,8 +7,6 @@
 //! table) and `TalkPolicy::refusal`'s `invalid` branch (the plain sentence); `src/fleet.rs`
 //! `talk_policy` (read nothing).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::talk::{from_now, hosted_talk_seeded};

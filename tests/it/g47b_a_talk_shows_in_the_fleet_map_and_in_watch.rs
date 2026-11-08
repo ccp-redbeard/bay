@@ -8,9 +8,6 @@
 //! and `talk_closed` once when that talk closes; a watch from the cursor it returned lists
 //! neither again.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

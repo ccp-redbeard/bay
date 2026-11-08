@@ -15,9 +15,6 @@
 //! `accept`, fetch before listing, and the fetch and the listing no longer overlap; in
 //! `src/watch.rs` `run`, fetch the log and the lanes in turn, and `--since` overlaps nothing.
 
-// The slow upload-pack is a shell script, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;
@@ -38,9 +35,7 @@ fn slow_remote(case: &Plain, dir: &Path) {
             format!("#!/bin/sh\nsleep 0.4\nexec git {pack} \"$@\"\n"),
         )
         .unwrap();
-        let mut mode = std::fs::metadata(&script).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o755);
-        std::fs::set_permissions(&script, mode).unwrap();
+        crate::support::set_executable(&script);
         case.test_box
             .git_ok(dir, &["config", key, script.to_str().unwrap()]);
     }
@@ -219,6 +214,10 @@ fn acked(result: &Value, id: &str) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: the fleet map lists no live sessions; under investigation"
+)]
 fn a_status_accepts_talks_in_two_round_trips_beside_its_receipts_sync() {
     let case = Plain::approvals();
     let id = talks_both_ways(&case);
@@ -231,6 +230,10 @@ fn a_status_accepts_talks_in_two_round_trips_beside_its_receipts_sync() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: the fleet map lists no live sessions; under investigation"
+)]
 fn a_status_since_accepts_talks_beside_its_other_fetches() {
     let case = Plain::approvals();
     let id = talks_both_ways(&case);

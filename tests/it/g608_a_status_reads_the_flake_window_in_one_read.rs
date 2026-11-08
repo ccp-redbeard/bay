@@ -6,10 +6,6 @@
 //! Guard to mutate, in `src/status.rs` `flakes`: read each landing's records alone, and a
 //! status lists the evidence refs once more for each landing.
 
-// The landing runs a shell check adapter, and the case puts a shell wrapper for `git` on PATH,
-// so it runs on Unix only.
-#![cfg(unix)]
-
 use crate::g606_a_status_judges_red_from_the_last_status::land;
 use crate::support;
 

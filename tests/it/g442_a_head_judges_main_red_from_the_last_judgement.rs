@@ -10,9 +10,6 @@
 //! The guard to mutate: `red::red` passes its last judgement to `judge` (`src/red.rs`; pass
 //! `None` and every head judges in full).
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -30,9 +30,6 @@
 //! messages, and an amend in the view that changes only the message is a new draft (guards:
 //! `src/publish.rs` `commit_candidate`'s author; `src/change.rs` `same_draft`'s message).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

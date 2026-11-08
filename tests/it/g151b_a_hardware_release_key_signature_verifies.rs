@@ -4,8 +4,6 @@
 //! namespace `bay-test`, so it can never pass as a release signature (namespace `bay-release`).
 //! The allowed-signers file is the one bay writes from `RELEASE_KEYS`.
 
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 

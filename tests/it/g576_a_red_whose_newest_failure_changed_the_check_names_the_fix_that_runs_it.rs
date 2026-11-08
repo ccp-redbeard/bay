@@ -13,9 +13,6 @@
 //! Guards to mutate, in `src/red.rs`: `changed_check` always `false` (the row and the step are
 //! missing), or always `true` (`bad`'s row names a check it did not change).
 
-// Each case runs shell scripts (the adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

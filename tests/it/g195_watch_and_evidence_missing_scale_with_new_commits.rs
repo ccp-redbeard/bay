@@ -8,9 +8,6 @@
 //! costs the same git spawns after 32 earlier commits as after 5. And the judgement from a
 //! cursor is the full one: the same red as `bay status` and a watch with no cursor.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use assert_cmd::Command;

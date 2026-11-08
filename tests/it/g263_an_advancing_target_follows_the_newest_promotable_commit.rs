@@ -12,9 +12,6 @@
 //! `crate::target` (make it `if true`, and the first pass picks the red landing, which the
 //! re-judgement refuses, so `staging` never reaches the green one).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

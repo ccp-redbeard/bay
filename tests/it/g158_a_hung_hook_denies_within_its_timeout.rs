@@ -6,9 +6,6 @@
 //! `"timeout": 30` on bay's `PreToolUse` entry: a hung bay denies within 30 s. A re-install
 //! puts it on an entry an earlier bay wrote without it, and doctor's `hooks` row names it.
 
-// Each case runs shell scripts (a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

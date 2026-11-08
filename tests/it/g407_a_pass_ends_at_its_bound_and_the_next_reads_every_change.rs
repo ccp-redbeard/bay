@@ -5,8 +5,6 @@
 //!
 //! Guard to mutate, in `src/executor.rs`: the bound check in `pass` (remove it).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

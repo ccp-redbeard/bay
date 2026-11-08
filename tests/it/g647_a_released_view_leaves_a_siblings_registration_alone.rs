@@ -8,9 +8,6 @@
 //! The guard to mutate, in `src/view.rs`: `unregister`, a plain `git worktree prune` (the sibling
 //! is gone from the list).
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::PathBuf;
 
 use crate::support;

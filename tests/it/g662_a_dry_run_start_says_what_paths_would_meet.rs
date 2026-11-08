@@ -6,9 +6,6 @@
 //! Guards to mutate, in `src/main.rs`: the `dry_run` test (a change opens); in `src/start.rs`
 //! `preview`: the overlaps it lists.
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

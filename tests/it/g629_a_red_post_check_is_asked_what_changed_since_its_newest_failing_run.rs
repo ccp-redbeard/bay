@@ -13,8 +13,6 @@
 //! asked units again: after the half run, the range is the half run's landing and t2 is not
 //! tested again).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

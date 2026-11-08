@@ -9,9 +9,6 @@
 //! on trunk is `CHANGE_NOT_MERGED`. `--to-change` names the recipient, so a recipient given
 //! beside it is refused.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

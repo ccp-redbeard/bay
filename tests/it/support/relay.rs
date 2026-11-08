@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -157,7 +157,7 @@ fn serve(root: &Path, env: &[(String, String)], request: &Path) {
     let read = |name: &str| std::fs::read_to_string(q.join(name)).unwrap_or_default();
     let script = read("script");
     let args: Vec<String> = read("args").lines().map(str::to_owned).collect();
-    let out = Command::new("sh")
+    let out = super::sh()
         .arg("-c")
         .arg(&script)
         .arg("sh")

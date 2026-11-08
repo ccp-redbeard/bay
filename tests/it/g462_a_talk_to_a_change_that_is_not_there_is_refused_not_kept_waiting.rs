@@ -11,9 +11,6 @@
 //! - `src/talk/lander.rs` `change_exists`: always `true` (the unknown change id waits again), or
 //!   always `false` (the pending change is refused).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::plain_talk::Plain;

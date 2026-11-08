@@ -32,9 +32,6 @@
 //! - `after_itself`, `if record.after.iter().any(|named| named == change)`: drop it, and the
 //!   third case's cycle is recorded.
 
-// Each case runs shell scripts (the check adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

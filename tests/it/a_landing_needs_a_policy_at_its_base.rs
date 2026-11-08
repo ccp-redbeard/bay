@@ -11,9 +11,6 @@
 //! unchecked by that base: a policy or adapter it adds takes effect only after it lands, never
 //! for its own landing, unless it is a registry-signed repair.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -301,13 +298,12 @@ fn start_on(test_box: &TestBox, repo: &Path, intent: &str, paths: &[&str]) -> (S
 
 /// Writes `files` into `view`; an adapter under `scripts/` is executable.
 fn write_files(view: &Path, files: &[(String, String)]) {
-    use std::os::unix::fs::PermissionsExt;
     for (path, text) in files {
         let at = view.join(path);
         std::fs::create_dir_all(at.parent().unwrap()).unwrap();
         std::fs::write(&at, text).unwrap();
         if path.starts_with("scripts/") {
-            std::fs::set_permissions(&at, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::support::set_executable(&at);
         }
     }
 }

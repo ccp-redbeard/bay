@@ -14,9 +14,6 @@
 //! - `src/talk/judge.rs` `append`: the approver classes only on a talk that asks a person (the
 //!   host refuses the person's answer).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

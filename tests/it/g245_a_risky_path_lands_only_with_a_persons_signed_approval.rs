@@ -8,9 +8,6 @@
 //! a failed check that names the approver. Without a registry no approval can count, and the
 //! refusal says so.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

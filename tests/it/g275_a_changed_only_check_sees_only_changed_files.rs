@@ -18,9 +18,6 @@
 //! - `src/policy.rs` `validate_footprint`: drop the `entry.footprint && entry.changed_only()`
 //!   refusal; `validate_kind`: drop the `("materialize", ...)` row.
 
-// Each case runs a check adapter (a shell script), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -10,9 +10,6 @@
 //! And in `red_gate`, the read of the post records before it judges: without it, a push sees no red
 //! another machine recorded (G577 finds the change on main).
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -8,9 +8,6 @@
 //! not a landing; the stream counts those as `off_first_parent`, so its population is stated.
 //! A watch from the cursor it returns lists nothing new.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

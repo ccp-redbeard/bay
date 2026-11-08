@@ -9,12 +9,7 @@
 //! Guard to mutate: `src/publish.rs` `Ctx::refused`: return `None` at once (the refusal reads as
 //! a moved chain).
 
-// The remote's hook is a shell script, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
-
-use std::os::unix::fs::PermissionsExt;
 
 use support::{TestBox, result_json, unchecked_files};
 
@@ -34,7 +29,7 @@ fn a_remote_that_refuses_the_request_is_named_with_its_reason() {
         "#!/bin/sh\nwhile read old new ref; do case \"$ref\" in refs/bay/requests/*) echo 'this project is over its history limit' >&2; exit 1;; esac; done\nexit 0\n",
     )
     .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::support::set_executable(&hook);
 
     let (code, result) = result_json(test_box.bay(&view).arg("merge"));
     assert_ne!(code, 0, "{result}");

@@ -4,7 +4,6 @@
 
 #![allow(dead_code)]
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
@@ -51,11 +50,11 @@ impl TestBox {
         // The box's choice to run checks with no sandbox where it has none (ruling R14), so
         // the suite runs on a machine without one; a sandbox case clears it.
         std::fs::write(&global_config, BOX_CONFIG).unwrap();
-        let out = StdCommand::new("sh")
-            .args(["-c", "command -v git"])
-            .output()
-            .unwrap();
-        let real_git = PathBuf::from(String::from_utf8(out.stdout).unwrap().trim());
+        let real_git = real_git();
+        if cfg!(windows) {
+            // The shims in fakebin find Git's sh.exe here (see `examples/sh_shim.rs`).
+            std::fs::write(fakebin.join("sh.path"), sh_program().to_str().unwrap()).unwrap();
+        }
         let test_box = Self {
             relay: std::sync::OnceLock::new(),
             root,
@@ -91,6 +90,11 @@ impl TestBox {
                 ),
             ];
             env.push(("LANG".to_owned(), "C.UTF-8".to_owned()));
+            env.extend(
+                platform_env()
+                    .into_iter()
+                    .map(|(name, value)| (name.to_owned(), value.to_string_lossy().into_owned())),
+            );
             relay::Watcher::start(self.path().to_path_buf(), env)
         });
         relay::call(snippet)
@@ -202,12 +206,10 @@ impl TestBox {
         self.home.join(".local").join("bin")
     }
 
-    fn path_var(&self) -> String {
-        format!(
-            "{}:{}:/bin:/usr/bin",
-            self.fakebin.display(),
-            self.local_bin().display()
-        )
+    /// This box's `PATH`: its fake programs, its installed ones, then the system's.
+    #[must_use]
+    pub fn path_var(&self) -> String {
+        search_path(&[&self.fakebin, &self.local_bin()])
     }
 
     /// A git command with this box's environment.
@@ -235,6 +237,7 @@ impl TestBox {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_bay"));
         cmd.arg("-C").arg(dir);
         cmd.env_clear()
+            .envs(platform_env())
             .env("PATH", self.path_var())
             .env("HOME", &self.home)
             .env("GIT_CONFIG_GLOBAL", &self.global_config)
@@ -261,6 +264,7 @@ impl TestBox {
         let mut cmd = StdCommand::new(env!("CARGO_BIN_EXE_bay"));
         cmd.arg("-C").arg(dir);
         cmd.env_clear()
+            .envs(platform_env())
             .env("PATH", self.path_var())
             .env("HOME", &self.home)
             .env("GIT_CONFIG_GLOBAL", &self.global_config)
@@ -278,6 +282,7 @@ impl TestBox {
 
     fn apply_env(&self, cmd: &mut StdCommand) {
         cmd.env_clear()
+            .envs(platform_env())
             .env("PATH", self.path_var())
             .env("HOME", &self.home)
             .env("GIT_CONFIG_GLOBAL", &self.global_config)
@@ -560,10 +565,12 @@ impl TestBox {
             std::fs::write(&full, text).unwrap();
         }
         let script = repo.join("scripts/bay-check");
-        if script.exists() {
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        set_executable(&script);
         self.git_ok(repo, &["add", "--all"]);
+        if cfg!(windows) && script.exists() {
+            // No file mode on Windows: the index carries the executable bit.
+            self.git_ok(repo, &["update-index", "--chmod=+x", "scripts/bay-check"]);
+        }
         self.git_ok(repo, &["commit", "-q", "-m", "trunk"]);
         self.git_ok(repo, &["push", "-q", "origin", "main"]);
         self.git_ok(repo, &["rev-parse", "HEAD"])
@@ -916,7 +923,11 @@ pub fn key_line(principal: &str, key: &Path) -> String {
 /// writing, also `ETXTBSY`.
 pub fn write_executable(path: &Path, script: &str) {
     use std::io::Write as _;
-    let mut child = StdCommand::new("sh")
+    if cfg!(windows) {
+        write_executable_windows(path, script);
+        return;
+    }
+    let mut child = sh()
         .args([
             "-c",
             "cat > \"$1.new\" && chmod 755 \"$1.new\" && mv -f \"$1.new\" \"$1\"",
@@ -937,6 +948,160 @@ pub fn write_executable(path: &Path, script: &str) {
         "writing {}",
         path.display()
     );
+}
+
+/// [`write_executable`] on Windows, which starts no script without an extension: the script
+/// goes in by a rename as on Unix, and a program beside it, `<name>.exe`, is a copy of the
+/// test shim (`examples/sh_shim.rs`), which runs the script through Git's `sh.exe`. Only a
+/// script in a `bin` or `fakebin` directory gets a shim, so no `.exe` lands in a repository.
+fn write_executable_windows(path: &Path, script: &str) {
+    let new = path.with_extension("new");
+    std::fs::write(&new, script).unwrap();
+    std::fs::rename(&new, path).unwrap();
+    let dir = path.parent().and_then(Path::file_name);
+    let in_bin = dir.is_some_and(|dir| dir == "bin" || dir == "fakebin");
+    let program = path.with_extension("exe");
+    if in_bin && path.extension().is_none() && !program.exists() {
+        std::fs::copy(shim(), &program).unwrap();
+        let beside = path.with_file_name("sh.path");
+        if !beside.exists() {
+            std::fs::write(beside, sh_program().to_str().unwrap()).unwrap();
+        }
+    }
+}
+
+/// The test shim `cargo test` builds with the examples, beside this test binary's `deps`.
+fn shim() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let shim = exe
+        .parent()
+        .and_then(Path::parent)
+        .unwrap()
+        .join("examples")
+        .join("sh_shim.exe");
+    assert!(
+        shim.is_file(),
+        "{} is missing: cargo test builds it with the examples",
+        shim.display()
+    );
+    shim
+}
+
+/// Marks `path` executable where it exists. Windows has no mode bits to set.
+pub fn set_executable(path: &Path) {
+    #[cfg(unix)]
+    if path.exists() {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+/// The POSIX shell: `/bin/sh` on Unix, whatever a test sets `PATH` to; on Windows Git for
+/// Windows' `sh.exe`, found as bay finds it.
+#[must_use]
+pub fn sh_program() -> PathBuf {
+    static SH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    SH.get_or_init(|| {
+        if !cfg!(windows) {
+            return PathBuf::from("/bin/sh");
+        }
+        let out = StdCommand::new("git").arg("--exec-path").output().unwrap();
+        let exec_path = String::from_utf8(out.stdout).unwrap();
+        bay::platform::sh_candidates(Path::new(exec_path.trim()))
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+            .expect("Git for Windows' sh.exe, above git --exec-path")
+    })
+    .clone()
+}
+
+/// `path` as one spelling for comparing: on Windows with `\` throughout and no `\\?\` prefix,
+/// since bay may print a directory Git named (with `/`) joined to more (with `\`). Unchanged
+/// on Unix.
+#[must_use]
+pub fn path_text(path: impl AsRef<std::ffi::OsStr>) -> String {
+    let text = Path::new(path.as_ref()).display().to_string();
+    if !cfg!(windows) {
+        return text;
+    }
+    let text = text.replace('/', "\\");
+    text.strip_prefix(r"\\?\")
+        .map_or(text.clone(), str::to_owned)
+}
+
+/// `path` as a shell word can name it: on Windows with `/` for `\`, which `sh` would read as
+/// escapes (as in a `GIT_SSH_COMMAND` git runs through it). Unchanged on Unix.
+#[must_use]
+pub fn sh_path(path: impl AsRef<std::ffi::OsStr>) -> String {
+    let text = Path::new(path.as_ref()).display().to_string();
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text
+    }
+}
+
+/// The file name `bay install` gives the binary: `bay`, or `bay.exe` on Windows.
+pub const BAY_EXE: &str = if cfg!(windows) { "bay.exe" } else { "bay" };
+
+/// A `PATH` of `dirs`, then the system's own tools: `/bin` and `/usr/bin` on Unix; on Windows
+/// Git for Windows' `usr\bin` (sh, sed, cat, ssh-keygen, ...), which stands in for both.
+#[must_use]
+pub fn search_path(dirs: &[&Path]) -> String {
+    if cfg!(windows) {
+        let sh_dir = sh_program().parent().unwrap().to_path_buf();
+        let root = sh_dir.parent().unwrap();
+        let root = if root.ends_with("usr") {
+            root.parent().unwrap()
+        } else {
+            root
+        };
+        let tools = root.join("usr").join("bin");
+        let all = dirs.iter().map(|dir| dir.to_path_buf()).chain([tools]);
+        return std::env::join_paths(all).unwrap().into_string().unwrap();
+    }
+    let mut all: Vec<String> = dirs.iter().map(|dir| dir.display().to_string()).collect();
+    all.extend(["/bin".to_owned(), "/usr/bin".to_owned()]);
+    all.join(":")
+}
+
+/// A command that starts [`sh_program`].
+#[must_use]
+pub fn sh() -> StdCommand {
+    StdCommand::new(sh_program())
+}
+
+/// The real git this machine runs, as a path a shell script can name.
+fn real_git() -> PathBuf {
+    if cfg!(windows) {
+        let git = bay::platform::program("git");
+        assert!(git.is_absolute(), "no git.exe on PATH");
+        return PathBuf::from(git.to_str().unwrap().replace('\\', "/"));
+    }
+    let out = sh().args(["-c", "command -v git"]).output().unwrap();
+    PathBuf::from(String::from_utf8(out.stdout).unwrap().trim())
+}
+
+/// The variables a cleared environment keeps on Windows, where a process needs them to start
+/// (`SYSTEMROOT`) or to find a temporary directory. None on Unix.
+///
+/// Also `MSYS2_ARG_CONV_EXCL=*`: Git for Windows' `sh.exe` otherwise rewrites an argument
+/// that starts with `/` (`/refs/x` becomes `C:/Program Files/Git/refs/x`) before it starts a
+/// Windows program, so a box's `git` wrapper would not hand bay's calls to git as they were.
+#[must_use]
+pub fn platform_env() -> Vec<(&'static str, std::ffi::OsString)> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let mut env: Vec<(&'static str, std::ffi::OsString)> =
+        ["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATHEXT", "COMSPEC"]
+            .into_iter()
+            .filter_map(|name| std::env::var_os(name).map(|value| (name, value)))
+            .collect();
+    env.push(("MSYS2_ARG_CONV_EXCL", "*".into()));
+    env
 }
 
 /// The object and ref format for a test that holds for every format: `sha1`/`files`, or

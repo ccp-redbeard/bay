@@ -7,12 +7,7 @@
 //!
 //! Guard to mutate: `src/git.rs` `as_formatted`: drop the `--no-verify` arm (the start fails).
 
-// The hook is a shell script, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
-
-use std::os::unix::fs::PermissionsExt as _;
 
 use support::{TestBox, result_json, unchecked_files};
 
@@ -25,7 +20,7 @@ fn a_failing_push_hook_never_breaks_a_start() {
     std::fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("pre-push");
     std::fs::write(&hook, "#!/bin/sh\necho refused by the hook >&2\nexit 1\n").unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::support::set_executable(&hook);
 
     let (code, started) =
         result_json(

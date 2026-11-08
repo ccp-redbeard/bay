@@ -8,9 +8,6 @@
 //! keeps the talk ids, so the same talk is never told again in that session. A talk fetched but
 //! not acked is not arrived.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

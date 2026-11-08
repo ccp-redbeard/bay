@@ -23,8 +23,6 @@
 //! In `src/result.rs`, `main_say` out of the `Decision::Ok` sentences (status says nothing is
 //! needed while main is red or a fix's run has not answered).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

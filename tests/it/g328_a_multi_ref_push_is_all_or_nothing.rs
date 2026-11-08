@@ -8,12 +8,7 @@
 //! - `src/share.rs` `run`: drop `"--atomic"` (the remote keeps the change ref without its
 //!   notes).
 
-// The remote's hook is a shell script, so Unix only.
-#![cfg(unix)]
-
 use crate::support;
-
-use std::os::unix::fs::PermissionsExt;
 
 use support::{TestBox, check_files, passing_result, result_json};
 
@@ -46,7 +41,7 @@ fn a_share_the_host_refuses_in_part_leaves_nothing_there() {
         "#!/bin/sh\ncase \"$1\" in refs/notes/*) echo refused >&2; exit 1;; esac\nexit 0\n",
     )
     .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::support::set_executable(&hook);
     test_box.git_ok(&repo, &["remote", "add", "other", other.to_str().unwrap()]);
 
     let (code, shared) = result_json(

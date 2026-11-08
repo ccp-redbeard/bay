@@ -10,9 +10,6 @@
 //! The guard: in `crate::notice::landings`, `if paths.is_empty() { continue; }`. Mutate it
 //! (remove the `continue`, or the check) and the change on `ui/` is told of B's landing too.
 
-// Each case runs the hook with a wrapper on PATH, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

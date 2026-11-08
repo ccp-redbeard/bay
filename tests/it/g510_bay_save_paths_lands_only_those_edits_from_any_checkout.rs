@@ -26,9 +26,6 @@
 //! - `in_progress` reads the checkout's own git directory: read `repo.common_dir` instead (the
 //!   fifth case fails both ways).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

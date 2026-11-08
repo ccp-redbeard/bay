@@ -8,9 +8,6 @@
 //! late it is looked at, even with a skewed clock. The host refuses an `expired` close on a talk
 //! read in time.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;
@@ -113,6 +110,10 @@ fn closed(status: &Value) -> Vec<Value> {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: the fleet map lists no live sessions; under investigation"
+)]
 fn a_talk_read_after_it_expires_prints_expired_and_owes_no_backbrief() {
     let case = hosted_talk();
     hook(&case, "session.start", "01-SessionStart.json");

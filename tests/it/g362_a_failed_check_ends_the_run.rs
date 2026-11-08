@@ -14,9 +14,6 @@
 //! - `src/check.rs` `run_parallel`: drop the `ended_by_failure` term of `stop` (the parallel
 //!   run starts the third check after the lint failed).
 
-// Each case runs a check adapter (a shell script), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::fmt::Write as _;

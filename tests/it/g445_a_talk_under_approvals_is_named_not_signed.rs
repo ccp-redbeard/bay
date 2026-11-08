@@ -31,9 +31,6 @@
 //!   name is not read), or drop `if party` (the third actor's answer counts).
 //! - `src/talk/poll.rs` `command`: drop the interval check (the second status fetches again).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

@@ -18,9 +18,6 @@
 //!   with the operation `running`): it waits for the operation's outcome, takes it over once
 //!   the holder's lease passes, and the change lands once.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

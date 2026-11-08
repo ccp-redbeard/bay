@@ -14,12 +14,8 @@
 //! - `src/assets/store.rs` `run`: answer an ssh remote with the path case here (the store is
 //!   never asked over ssh).
 
-// The fake ssh is a shell script, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use crate::g340_a_large_file_saved_never_enters_git::{MIB, sha256_hex, video};
@@ -86,7 +82,7 @@ fn an_ssh_remote_keeps_the_bytes_on_its_host() {
     let (test_box, _repo, remote) = trunk();
     let ssh = test_box.path().join("fake-ssh");
     std::fs::write(&ssh, FAKE_SSH).unwrap();
-    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::support::set_executable(&ssh);
     let log = test_box.path().join("ssh.log");
     let clone = test_box.clone_of(&remote, "over-ssh");
     test_box.git_ok(
@@ -95,7 +91,7 @@ fn an_ssh_remote_keeps_the_bytes_on_its_host() {
             "remote",
             "set-url",
             "origin",
-            &format!("somehost:{}", remote.display()),
+            &format!("somehost:{}", crate::support::sh_path(&remote)),
         ],
     );
     let bytes: Vec<u8> = video().iter().map(|byte| byte ^ 0x5a).collect();
@@ -104,8 +100,11 @@ fn an_ssh_remote_keeps_the_bytes_on_its_host() {
     let (code, saved) = result_json(
         test_box
             .bay(&clone)
-            .env("GIT_SSH_COMMAND", &ssh)
-            .env("FAKE_BAY", env!("CARGO_BIN_EXE_bay"))
+            .env("GIT_SSH_COMMAND", crate::support::sh_path(&ssh))
+            .env(
+                "FAKE_BAY",
+                crate::support::sh_path(env!("CARGO_BIN_EXE_bay")),
+            )
             .env("FAKE_SSH_LOG", &log)
             .args(["save", "add the second take"]),
     );

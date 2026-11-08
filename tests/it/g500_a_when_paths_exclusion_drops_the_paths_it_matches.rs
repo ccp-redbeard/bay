@@ -19,9 +19,6 @@
 //! (back to any glob), and the hold rule in `validate_shape` (back to any glob: an approval
 //! whose list drops the policy file is taken as one over it).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

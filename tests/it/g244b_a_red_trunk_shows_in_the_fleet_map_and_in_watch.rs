@@ -5,9 +5,6 @@
 //! each entry whose change works on red paths (`on_red`). `bay status --since` lists a `trunk_red` event
 //! when a check turns red after the cursor, and a `trunk_red_cleared` event when a fix clears it.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

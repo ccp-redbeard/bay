@@ -4,9 +4,6 @@
 //! On `files` a reader can see half of one. Doctor names that on the host, with the remedy,
 //! as advisory: publication still works there, through trunk as the commit point.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json, row};

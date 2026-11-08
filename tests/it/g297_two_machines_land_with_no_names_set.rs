@@ -15,9 +15,6 @@
 //! - `src/signing.rs` `own_producer_name`: write nothing, `Ok(_) => name` for every outcome
 //!   without the `git config` (each command takes a new name, and the clone keeps none).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

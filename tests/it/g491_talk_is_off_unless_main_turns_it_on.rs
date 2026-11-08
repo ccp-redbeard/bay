@@ -10,8 +10,6 @@
 //! `allowed` in `open` (the answer) and in `deliver` (the kinds); `src/talk/accept.rs` the `off`
 //! return and the `wakes` branch; `src/hook.rs` `Judge::talk`'s off check.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::talk::{TalkCase, from_now, hosted_talk_seeded};

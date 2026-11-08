@@ -6,9 +6,6 @@
 //! holds. Its age (`session_age_s`) runs from the first event the hook recorded for the session
 //! (`started`), not from its latest one (`age_s`).
 
-// Each case runs the hook as a process with a payload on stdin, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

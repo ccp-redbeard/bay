@@ -6,6 +6,7 @@
 //!
 //! Guard to mutate, in `src/publish.rs`: `holds_place` returning `true`.
 
+// Unix only: it stops and resumes a runner with SIGSTOP and SIGCONT.
 #![cfg(unix)]
 
 use crate::support;

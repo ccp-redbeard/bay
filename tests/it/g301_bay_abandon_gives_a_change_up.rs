@@ -16,9 +16,6 @@
 //! - `src/publish.rs` `land`: drop the `if let Some(why) = abandon { ... }` branch:
 //!   `bay_land_abandon_still_works` fails, with every case above.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

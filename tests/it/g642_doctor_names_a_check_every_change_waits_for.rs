@@ -7,9 +7,6 @@
 //! Guards to mutate, in `src/doctor.rs` `pre_merge_row`: the `stage` test (the check after the
 //! merge is named); the `wakes` test (the scoped check is named).
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;

@@ -16,9 +16,6 @@
 //! - `src/install.rs` `run`: drop the `carry_over` call (the old key stays, the new one unset).
 //! - `src/doctor.rs` `probe`: drop the `renamed-keys` row.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

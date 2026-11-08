@@ -5,9 +5,6 @@
 //! `not_on_recipient`; once accepted, `arrived`; past its `follow_up` with no backbrief, `stale`,
 //! and the row stays. (The 24-hour lost arrival is the unit test in `talk::standing`.)
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;
@@ -24,6 +21,10 @@ fn talk_row(status: &Value, id: &str) -> Value {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: the fleet map lists no live sessions; under investigation"
+)]
 fn status_lists_a_talk_until_it_closes_and_names_who_owes_the_reply() {
     let case = hosted_talk();
     let follow_up = from_now(6);

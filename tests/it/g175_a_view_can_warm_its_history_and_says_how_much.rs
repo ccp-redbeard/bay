@@ -7,9 +7,6 @@
 //! is warmed. Without the switch nothing old is fetched (G18 still holds), and below Git 2.54 the
 //! warm-up is `skipped` with its floor.
 
-// The store is served over `file://` and the remote is moved away to prove the view offline.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

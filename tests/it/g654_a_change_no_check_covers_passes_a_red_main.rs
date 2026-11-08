@@ -10,9 +10,6 @@
 //! and the mixed change merge); the `needs_no_check` test (the listed file a pre-merge check covers
 //! merges); the `passed_red` it records (the name is missing).
 
-// Each case runs a shell script (the check's adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

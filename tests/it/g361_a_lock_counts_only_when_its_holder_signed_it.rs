@@ -18,9 +18,6 @@
 //!   lock, so the edit is refused).
 //! - `src/hook.rs` `Judge::lock`: return `Ok(())` at once (the host takes the forged lock).
 
-// Each case runs shell scripts (a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write as _;

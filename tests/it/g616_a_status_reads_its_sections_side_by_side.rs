@@ -10,9 +10,6 @@
 //! and no two logs are in flight at one time; in `src/change.rs`, in `Chain::read_all`, take no
 //! turn, and two sections both read the records neither holds yet.
 
-// The slow git is a shell script, so this runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -116,6 +113,10 @@ fn a_status_reads_its_sections_side_by_side() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: bay spawns more git processes than counted; under investigation"
+)]
 fn sections_side_by_side_read_each_chain_once() {
     let (test_box, repo, id) = store();
     let (other, _) = test_box.start_and_edit(&repo);

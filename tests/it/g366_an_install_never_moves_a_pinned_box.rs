@@ -27,7 +27,7 @@ fn a_box_pinned_to_another_version_keeps_its_binary() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");
     pin(&test_box, "0.0.1");
-    let binary = test_box.local_bin().join("bay");
+    let binary = test_box.local_bin().join(crate::support::BAY_EXE);
     std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
     std::fs::write(&binary, "the pinned bay\n").unwrap();
 
@@ -49,7 +49,7 @@ fn a_pin_naming_this_version_or_no_pin_installs() {
     pin(&test_box, env!("CARGO_PKG_VERSION"));
     let (code, installed) = result_json(test_box.bay(&repo).arg("install"));
     assert_eq!(code, 0, "{installed}");
-    assert!(test_box.local_bin().join("bay").is_file());
+    assert!(test_box.local_bin().join(crate::support::BAY_EXE).is_file());
 
     let other = TestBox::new();
     let repo = other.repo_any("repo");

@@ -6,9 +6,6 @@
 //! registry class file, the policy and the config at the trunk commit at most once in each of its
 //! processes. A status that sweeps the remote runs its sweep as a process of its own (G619).
 
-// Each case runs a shell script (a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::BTreeMap;
@@ -46,6 +43,10 @@ fn reads(calls: &[Vec<String>], objects: &[&str]) -> BTreeMap<String, usize> {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: bay spawns more git processes than counted; under investigation"
+)]
 fn a_status_reads_the_registry_policy_and_config_at_trunk_once() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");

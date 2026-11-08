@@ -5,9 +5,6 @@
 //! publish; each observer measures the lease from its own first sighting on its monotonic
 //! clock; a supervisor that reboots waits a full lease again before it claims.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

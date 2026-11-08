@@ -25,9 +25,6 @@
 //! - `if !scratch.join(program).is_file()`: drop it, and the missing adapter's `why` no longer
 //!   names that it is not in trunk.
 
-// Each case runs a shell script (the prune adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

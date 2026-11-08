@@ -7,8 +7,6 @@
 //!
 //! Guard to mutate: `src/git.rs` `tree_path` answering `None`, so each name resolves alone.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

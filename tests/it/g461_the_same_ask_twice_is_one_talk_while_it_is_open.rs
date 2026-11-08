@@ -17,9 +17,6 @@
 //! - `src/talk/send.rs` `held`: drop the body comparison (a different context is `already_sent`).
 //! - `src/talk/send.rs` `past_closed`: return the body unchanged (the repeat is refused).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::plain_talk::Plain;

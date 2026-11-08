@@ -18,9 +18,6 @@
 //! - `src/save.rs` `save_in`: drop the `crate::locks::take` call (a person's save is refused
 //!   `LOCK_NOT_HELD`).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

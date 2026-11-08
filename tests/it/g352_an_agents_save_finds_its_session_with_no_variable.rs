@@ -15,9 +15,6 @@
 //! Guard to mutate: `src/agent_pid.rs` `session_of_caller`: return `None` at once (the agent's
 //! own save is refused `PATH_HELD` by its own lock).
 
-// The agent's process tree is read from the system: Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write as _;
@@ -80,6 +77,10 @@ exit 0"#;
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: an agent's process is not found (agent_pid is Unix only)"
+)]
 fn an_agents_own_save_takes_its_hooks_lock_and_a_terminals_does_not() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");

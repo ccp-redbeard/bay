@@ -11,8 +11,6 @@
 //! is never told); `unit_owners`' `red.covers` filter (every landing since the failing run before
 //! is told: the landing off the check's paths too).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

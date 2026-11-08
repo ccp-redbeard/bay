@@ -10,9 +10,6 @@
 //! `start` still knows the generation landed and claims the next one (G293), and the landing
 //! is still found.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;
@@ -303,7 +300,7 @@ fn a_failed_chain_fetch_never_rewrites_another_change() {
     // The connection drops for the other change's fetches. git fails before it writes
     // FETCH_HEAD, so FETCH_HEAD still holds the cut chain fetched just before.
     let other_ref = format!("refs/bay/changes/{other}");
-    let real_git = std::process::Command::new("sh")
+    let real_git = crate::support::sh()
         .args(["-c", "command -v git"])
         .output()
         .unwrap();

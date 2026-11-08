@@ -11,9 +11,6 @@
 //! Guard to mutate: `src/result.rs` `BayResult::serialize`: `self.detail.as_ref().map(printed)`
 //! to `self.detail.clone()` (the detail prints its stored names).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

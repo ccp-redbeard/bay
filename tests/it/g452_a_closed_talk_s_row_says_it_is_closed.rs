@@ -17,9 +17,6 @@
 //!   `decides` counts as an arrival).
 //! - `src/talk/standing.rs` `read_row`: the latest reply read from backbriefs only.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::{Value, json};

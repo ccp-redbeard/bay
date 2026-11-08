@@ -20,9 +20,6 @@
 //!   `group.insert("matcher".to_owned(), json!(matcher));` (the writer leaving the shape:
 //!   the written entry differs from the declared one).
 
-// `bay install` runs with a fake `claude` on PATH (a shell script), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

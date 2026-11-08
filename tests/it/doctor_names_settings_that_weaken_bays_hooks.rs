@@ -7,15 +7,12 @@
 //! or gives one of bay's events hook entries without bay's own command, makes doctor's
 //! `hook-overrides` row red, naming the file and the recovery. Doctor only reads.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use support::{TestBox, result_json, row};
+use support::{TestBox, path_text, result_json, row};
 
 const CLAUDE_ADAPTER: &str = "[agent]\nproduct = \"claude\"\n";
 
@@ -73,12 +70,16 @@ fn a_local_settings_file_that_disables_or_replaces_bays_hooks_is_red() {
     let row = overrides(&result);
     assert_eq!(row["state"], "red", "{row}");
     let found = &row["overrides"][0];
-    assert_eq!(found["file"], local.display().to_string(), "{row}");
+    assert_eq!(
+        path_text(found["file"].as_str().unwrap()),
+        path_text(&local),
+        "{row}"
+    );
     assert_eq!(found["disable_all_hooks"], true, "{row}");
     assert!(
         row["recovery"]
             .as_str()
-            .is_some_and(|recovery| recovery.contains(&local.display().to_string())
+            .is_some_and(|recovery| path_text(recovery).contains(&path_text(&local))
                 && recovery.contains("disableAllHooks")),
         "{row}"
     );
@@ -97,8 +98,8 @@ fn a_local_settings_file_that_disables_or_replaces_bays_hooks_is_red() {
     let row = overrides(&result);
     assert_eq!(row["state"], "green", "{row}");
     assert_eq!(
-        row["added"][0]["file"],
-        local.display().to_string(),
+        path_text(row["added"][0]["file"].as_str().unwrap()),
+        path_text(&local),
         "{row}"
     );
     assert_eq!(row["added"][0]["events"], json!(["PreToolUse"]), "{row}");
@@ -128,8 +129,8 @@ fn the_user_settings_file_is_read_where_the_product_reads_it() {
     let row = overrides(&result);
     assert_eq!(row["state"], "red", "{row}");
     assert_eq!(
-        row["overrides"][0]["file"],
-        user.display().to_string(),
+        path_text(row["overrides"][0]["file"].as_str().unwrap()),
+        path_text(&user),
         "{row}"
     );
     std::fs::remove_file(&user).unwrap();
@@ -147,13 +148,13 @@ fn the_user_settings_file_is_read_where_the_product_reads_it() {
     );
     let row = overrides(&result);
     assert_eq!(row["state"], "red", "{row}");
-    let files: Vec<&str> = row["overrides"]
+    let files: Vec<String> = row["overrides"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|found| found["file"].as_str().unwrap())
+        .map(|found| path_text(found["file"].as_str().unwrap()))
         .collect();
-    assert_eq!(files, [moved.display().to_string()], "{row}");
+    assert_eq!(files, [path_text(&moved)], "{row}");
     assert_eq!(row["overrides"][0]["disable_all_hooks"], true, "{row}");
 }
 

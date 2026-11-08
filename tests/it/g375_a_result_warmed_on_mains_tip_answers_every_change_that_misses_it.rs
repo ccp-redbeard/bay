@@ -12,8 +12,6 @@
 //! - `src/publish.rs` `carry_over`: leave out the base tree (the warm record on main's tip is
 //!   never looked at, and the docs change runs the check).
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::PRODUCER;
@@ -24,6 +22,10 @@ const CONFIG: &str = "[runner]\nlease_s = 30\nheartbeat_s = 1\nwarm = true\n";
 const POLICY: &str = "revision = 1\n\n[[check]]\nid = \"lint\"\nenvironment = \"local\"\ncommand = \"scripts/bay-check\"\nadapter = [\"scripts/bay-check\"]\nexpected_minimum = 1\ntimeout_s = 120\nfootprint = \"observed\"\n";
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: a check's observed reads are not carried; under investigation"
+)]
 fn a_change_that_misses_what_the_check_read_lands_on_the_warmed_result() {
     let held = host(&Check {
         config: CONFIG,

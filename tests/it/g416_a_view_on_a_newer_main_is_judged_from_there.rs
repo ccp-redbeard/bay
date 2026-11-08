@@ -6,8 +6,6 @@
 //!
 //! Guard to mutate: `src/publish.rs` `submit_land`: drop the `stand_on_view_base` call.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

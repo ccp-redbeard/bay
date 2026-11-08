@@ -6,9 +6,6 @@
 //! sender's bay, the host hook and the recipient's accept judge it by the same rule. The talk
 //! reaches the lander's session as any talk does, and the per-pair cap applies.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

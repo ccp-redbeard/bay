@@ -8,9 +8,6 @@
 //! The guard to mutate: the failed state `admit` in `src/publish.rs` writes when the submission
 //! does not succeed (leave the operation as it was).
 
-// Each case runs shell scripts (the executor adapter), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};
@@ -32,11 +29,7 @@ fn land_with(script: Option<&str>) -> (serde_json::Value, serde_json::Value, Vec
     ));
     test_box.seed_with_check(&repo, &[("src/a.rs", "fn a() {}\n")], &files);
     if script.is_some() {
-        std::fs::set_permissions(
-            repo.join("scripts/executor"),
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .unwrap();
+        crate::support::set_executable(&repo.join("scripts/executor"));
     }
     let (id, view) = test_box.start_and_edit(&repo);
     let (code, failed) = result_json(test_box.bay(&view).arg("merge"));

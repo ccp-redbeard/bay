@@ -3,9 +3,6 @@
 //! `GIT-FEATURES` § 1 gives a box in the executor role Git 2.50. `bay runner run` on an older
 //! Git refuses with `TOOL_BELOW_FLOOR` before it fetches or claims anything; at the floor it runs.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

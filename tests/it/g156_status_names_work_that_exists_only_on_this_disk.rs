@@ -6,9 +6,6 @@
 //! (0.3.0: `bay status --stranded` is gone; `--branches` shows every head). That part of the read
 //! uses local refs only, and nothing is pruned or deleted.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use serde_json::Value;

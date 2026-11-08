@@ -13,9 +13,6 @@
 //! head reads the red check's whole suspect range again; carry the answers of a landing whose
 //! notes moved and a judgement in this process misses the red a new record shows.
 
-// Each case runs a shell adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

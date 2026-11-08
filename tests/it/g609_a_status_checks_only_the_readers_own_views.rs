@@ -6,9 +6,6 @@
 //! Guard to mutate, in `src/status.rs` `leftovers`: list the views of every ended change again,
 //! and the other actor's status checks the abandoned view.
 
-// The case puts a shell wrapper for `git` on PATH, so it runs on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
@@ -33,6 +30,10 @@ fn leftover<'a>(status: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: bay spawns more git processes than counted; under investigation"
+)]
 fn a_status_names_another_actors_ended_views_and_checks_only_its_own() {
     let test_box = TestBox::new();
     let repo = test_box.repo_any("repo");

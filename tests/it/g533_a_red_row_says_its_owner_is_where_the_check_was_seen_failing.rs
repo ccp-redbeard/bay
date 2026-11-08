@@ -8,9 +8,6 @@
 //! Guards to mutate, in `src/red.rs`: `Red::say` without its "not a proven cause" clause; the
 //! suspect range (`Answers::suspect`) kept to the merges on the check's paths.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

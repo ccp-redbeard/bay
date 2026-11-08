@@ -9,8 +9,6 @@
 //! judgement), and `Cost::full` set from `known.is_some()` (`src/red.rs`: a first judgement in
 //! a process reads "from the last judgement").
 
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

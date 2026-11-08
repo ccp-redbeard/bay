@@ -7,9 +7,6 @@
 //! a forge, a merge of a research branch made outside bay is named under `unattributed` with
 //! the lane it leaked (`lane_leak`), in `bay status`, the fleet map and `bay status --since`.
 
-// Each case runs a check adapter (a shell script), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

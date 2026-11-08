@@ -8,9 +8,6 @@
 //! The guard to mutate: `Red::covers` in `src/red.rs` (back to any glob: the landing on the
 //! excluded path waits `MAIN_RED`; to `false`: the landing on `src/` lands on the red).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

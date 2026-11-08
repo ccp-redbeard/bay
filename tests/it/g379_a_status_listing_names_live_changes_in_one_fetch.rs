@@ -9,9 +9,6 @@
 //! Guards to mutate: `src/status.rs` `run`: drop the `!ended(record.state)` filter (the merged
 //! changes are listed); call `refresh_chains` for a listing too (a fetch per change).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::PathBuf;

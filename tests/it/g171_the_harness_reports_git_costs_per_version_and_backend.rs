@@ -5,9 +5,6 @@
 //! wrapper on `PATH` that logs every call: the same calls, by subcommand, and as many of them.
 //! With the variable unset or empty, nothing is written.
 
-// Each case runs shell scripts (a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::Path;

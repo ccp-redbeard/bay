@@ -6,8 +6,6 @@
 //!
 //! Guard to mutate, in `src/executor.rs`: `within_reach` returning `true` for every operation.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::PRODUCER;

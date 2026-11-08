@@ -8,9 +8,6 @@
 //! bay is `TALK_REFUSED` naming the open one, at the host hook and, where no hook judged it, at
 //! the author's accept.
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};

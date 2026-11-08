@@ -30,9 +30,6 @@
 //! - `src/doctor.rs` `codex_row`: `Program::Found(version) if *version < minimum => {` (make it
 //!   `if false`): a Codex below its floor is green.
 
-// Each case runs shell scripts (a fake codex on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::io::Write;

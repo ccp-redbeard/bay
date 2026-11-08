@@ -6,9 +6,6 @@
 //! records it reads are the ones `git notes show` gives, at whatever fanout the notes tree
 //! holds them.
 
-// The landing runs a shell check adapter, so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::collections::BTreeMap;

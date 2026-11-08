@@ -19,9 +19,6 @@
 //!   `.is_some_and(|_| false)`: nothing counts as waiting, and the second billing change waits
 //!   `APPROVAL_PENDING` instead).
 
-// Each case runs shell scripts (adapters, a wrapper on PATH), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use support::approval::{Trunk, trunk, trunk_with};

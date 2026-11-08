@@ -6,8 +6,6 @@
 //!
 //! Guard to mutate: `src/executor.rs` `pass`: the retention cut back inside the loop over changes.
 
-#![cfg(unix)]
-
 use crate::support;
 
 use support::{TestBox, check_files, passing_result, result_json};

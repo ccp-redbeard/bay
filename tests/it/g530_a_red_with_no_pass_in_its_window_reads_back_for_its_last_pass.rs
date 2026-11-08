@@ -7,9 +7,6 @@
 //! Guards to mutate, in `src/red.rs`: `Answers::past` reads nothing (the range has no good end
 //! and the bisect does not run); `Answers::suspect` stops at the window's end (the same).
 
-// Each case runs shell scripts (adapters), so these run on Unix only.
-#![cfg(unix)]
-
 use crate::support;
 
 use std::path::{Path, PathBuf};
