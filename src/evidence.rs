@@ -1459,7 +1459,7 @@ mod tests {
     fn a_record_copied_onto_another_trees_note_does_not_count_there() {
         use crate::change::RECORD_IDENTITY;
         let dir = tempfile::TempDir::new().unwrap();
-        let init = std::process::Command::new("git")
+        let init = crate::platform::git()
             .args(["init", "-q"])
             .arg(dir.path())
             .status()

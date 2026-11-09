@@ -317,7 +317,7 @@ impl BoxSettings {
     /// silently ignored.
     pub fn load() -> Result<Self, String> {
         let get = |args: &[&str]| {
-            let mut cmd = Command::new("git");
+            let mut cmd = crate::platform::git();
             cmd.args(["config", "--global"]).args(args);
             git::run_bounded(cmd, "git config --global")
                 .ok()

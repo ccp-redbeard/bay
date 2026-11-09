@@ -22,7 +22,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -505,7 +504,7 @@ fn stat_of(meta: &std::fs::Metadata, started: SystemTime) -> String {
 /// `git -C <view> <args>` with optional stdin, stopped at [`CALL_TIMEOUT`]; its stdout on
 /// success. A hook never takes the view's index lock from under the agent's own git.
 fn git(view: &Path, args: &[&str], input: Option<&[u8]>) -> Option<Vec<u8>> {
-    let mut cmd = Command::new("git");
+    let mut cmd = crate::platform::git();
     cmd.arg("-C")
         .arg(view)
         .args(args)

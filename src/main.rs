@@ -901,6 +901,7 @@ fn start_change(dir: &std::path::Path, command: Command) -> BayResult {
 }
 
 fn main() -> ExitCode {
+    bay::platform::keep_std_handles();
     let cli = parse();
     if let Some(refusal) = config_refusal(&cli) {
         return render(&refusal, cli.json);

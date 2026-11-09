@@ -732,7 +732,7 @@ impl Git {
     /// output instead of collecting it, and so bounds itself.
     #[must_use]
     pub fn command(&self) -> Command {
-        let mut cmd = Command::new("git");
+        let mut cmd = crate::platform::git();
         if self.bare_dir {
             cmd.arg(format!("--git-dir={}", self.dir.display()));
         } else {
@@ -1120,7 +1120,7 @@ fn trace_input(cmd: &Command, started: Instant, code: Option<i32>, input: Option
     let Some(file) = trace_file() else {
         return;
     };
-    if cmd.get_program() != "git" {
+    if !crate::platform::is_git(cmd.get_program()) {
         return;
     }
     let micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -1188,7 +1188,7 @@ fn subcommand_at(args: &[Cow<'_, str>]) -> Option<usize> {
 /// G200: whether `cmd` is a `git config` that may write: any that is not a `--get`, `--list`
 /// or `get`/`list` read. Every snapshot of [`Git::config_get`] is then read again.
 fn writes_config(cmd: &Command) -> bool {
-    if cmd.get_program() != "git" {
+    if !crate::platform::is_git(cmd.get_program()) {
         return false;
     }
     let args = args_of(cmd);
@@ -1685,7 +1685,7 @@ mod tests {
     #[test]
     fn the_config_snapshot_answers_as_git_does() {
         let dir = tempfile::TempDir::new().unwrap();
-        let init = Command::new("git")
+        let init = crate::platform::git()
             .args(["init", "-q"])
             .arg(dir.path())
             .status()

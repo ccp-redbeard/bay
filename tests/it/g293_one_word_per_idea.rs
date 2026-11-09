@@ -170,10 +170,6 @@ fn a_plain_start_after_a_landing_opens_the_next_generation() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: a timing bound this machine's process starts miss; under investigation"
-)]
 fn merge_wait_seconds_observes_and_detaches() {
     // The check outlasts the caller's bound by far, so a caller that waited for the run cannot
     // pass on a slow machine, and one that detached cannot fail on one.

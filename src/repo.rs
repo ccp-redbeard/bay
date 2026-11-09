@@ -991,7 +991,7 @@ mod tests {
     use super::{Fetch, Repo};
 
     fn git(dir: &Path, args: &[&str]) -> String {
-        let out = std::process::Command::new("git")
+        let out = crate::platform::git()
             .arg("-C")
             .arg(dir)
             .args(["-c", "user.name=t", "-c", "user.email=t@t.invalid"])

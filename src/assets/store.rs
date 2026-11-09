@@ -182,7 +182,7 @@ fn ssh_command() -> Vec<String> {
         .ok()
         .filter(|command| !command.trim().is_empty())
         .or_else(|| {
-            Command::new("git")
+            crate::platform::git()
                 .args(["config", "--get", "core.sshCommand"])
                 .output()
                 .ok()
@@ -447,7 +447,7 @@ struct Login {
 
 impl Login {
     fn fill(url: &str) -> Result<Self, String> {
-        let mut child = Command::new("git")
+        let mut child = crate::platform::git()
             .args(["credential", "fill"])
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(Stdio::piped())
@@ -471,7 +471,7 @@ impl Login {
         let mut lines = String::new();
         // The header Git itself sends to this remote (`http.extraHeader` for its URL), as a
         // clone that logs in by header (an agent's Basic, a runner's Bearer) pushes with it.
-        if let Some(header) = Command::new("git")
+        if let Some(header) = crate::platform::git()
             .args(["config", "--get-urlmatch", "http.extraHeader", url])
             .output()
             .ok()

@@ -701,7 +701,7 @@ fn read_path_overlap(read: &[PathBuf], hidden: &[PathBuf]) -> Option<String> {
 ///
 /// A value other than `none`, or a `git config` that fails.
 pub fn box_chose_unsandboxed() -> Result<bool, String> {
-    let mut cmd = Command::new("git");
+    let mut cmd = crate::platform::git();
     cmd.args(["config", "--global", "--get", UNSANDBOXED_KEY]);
     let output = crate::git::run_bounded(cmd, "git config --global")
         .map_err(|error| format!("{UNSANDBOXED_KEY} could not be read: {}", error.message()))?;

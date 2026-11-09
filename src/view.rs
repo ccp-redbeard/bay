@@ -879,7 +879,7 @@ mod tests {
         // Two `bay status` runs record the same view's journal at once; each writes a whole
         // file of its own and renames it into place.
         let dir = tempfile::TempDir::new().unwrap();
-        let init = std::process::Command::new("git")
+        let init = crate::platform::git()
             .args(["init", "-q"])
             .arg(dir.path())
             .status()
@@ -887,7 +887,7 @@ mod tests {
         assert!(init.success());
         // bay reads its config at the trunk tracking ref (ruling: config location).
         let git = |args: &[&str]| {
-            let out = std::process::Command::new("git")
+            let out = crate::platform::git()
                 .arg("-C")
                 .arg(dir.path())
                 .args(["-c", "user.name=t", "-c", "user.email=t@t.invalid"])

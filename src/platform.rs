@@ -38,6 +38,134 @@ pub fn program(name: &str) -> PathBuf {
     }
 }
 
+/// Keeps this process's standard handles to itself on Windows. A handle a Windows process
+/// was given is inheritable, and every process bay starts inherits each inheritable handle,
+/// whatever stdio it is given. A detached process bay leaves running (a checkpoint, a poll)
+/// then holds the caller's pipe open, and a caller reading bay's output to its end, as an
+/// agent reads a hook's, waits until that process ends. A child given bay's stdio still gets
+/// it: `Command` passes it a copy of its own.
+#[allow(unsafe_code)]
+pub fn keep_std_handles() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::{AsRawHandle as _, RawHandle};
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn SetHandleInformation(handle: RawHandle, mask: u32, flags: u32) -> i32;
+        }
+        const HANDLE_FLAG_INHERIT: u32 = 1;
+        for handle in [
+            std::io::stdin().as_raw_handle(),
+            std::io::stdout().as_raw_handle(),
+            std::io::stderr().as_raw_handle(),
+        ] {
+            if !handle.is_null() {
+                // SAFETY: the handle is this process's own standard handle, open for its
+                // lifetime; only its inherit flag changes. A failure leaves it as it was.
+                unsafe {
+                    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
+    }
+}
+
+/// A `git` command with no arguments yet. On Unix, and for any `git` but Git for Windows'
+/// launcher, `git` started by name. Git for Windows puts its launcher, `<root>\cmd\git.exe`, on
+/// `PATH`; the launcher starts `<root>\<arch>\bin\git.exe` with `MSYSTEM` set and Git's own
+/// directories first on `PATH`. Each call then costs two process starts, and a process start
+/// is slow on Windows. bay starts that git itself, with the environment the launcher gives it.
+#[must_use]
+pub fn git() -> Command {
+    let Some(direct) = git_direct() else {
+        return Command::new("git");
+    };
+    let mut cmd = Command::new(&direct.program);
+    let mut path = direct.path_prefix.clone();
+    if let Some(rest) = std::env::var_os("PATH") {
+        path.push(rest);
+    }
+    cmd.env("PATH", path);
+    if std::env::var_os("MSYSTEM").is_none() {
+        cmd.env("MSYSTEM", direct.msystem);
+    }
+    cmd
+}
+
+/// Whether `program` is the `git` that [`git`] starts.
+#[must_use]
+pub fn is_git(program: &OsStr) -> bool {
+    program == "git" || git_direct().is_some_and(|direct| direct.program == program)
+}
+
+/// Git for Windows' git, which its launcher would start, and what the launcher puts first on
+/// `PATH`.
+struct GitDirect {
+    program: PathBuf,
+    /// `<root>\<arch>\bin;<root>\usr\bin;<home>\bin;`, as the launcher puts it.
+    path_prefix: OsString,
+    msystem: &'static str,
+}
+
+/// [`GitDirect`] when the `git` on `PATH` is Git for Windows' launcher, found once: bay never
+/// changes its own `PATH`.
+fn git_direct() -> Option<&'static GitDirect> {
+    static DIRECT: std::sync::OnceLock<Option<GitDirect>> = std::sync::OnceLock::new();
+    DIRECT
+        .get_or_init(|| {
+            if !cfg!(windows) {
+                return None;
+            }
+            let launcher = resolve(
+                "git",
+                std::env::var_os("PATH").as_deref(),
+                std::env::var_os("PATHEXT").as_deref(),
+            )?;
+            git_behind_launcher(&launcher, home().as_deref())
+        })
+        .as_ref()
+}
+
+/// The git that `launcher` starts, when `launcher` is Git for Windows' `<root>\cmd\git.exe`
+/// and that git is installed beside it.
+fn git_behind_launcher(launcher: &Path, home: Option<&OsStr>) -> Option<GitDirect> {
+    let named = |path: &Path, name: &str| {
+        path.file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|file| file.eq_ignore_ascii_case(name))
+    };
+    let cmd_dir = launcher.parent()?;
+    if !named(launcher, "git.exe") || !named(cmd_dir, "cmd") {
+        return None;
+    }
+    let root = cmd_dir.parent()?;
+    [
+        ("mingw64", "MINGW64"),
+        ("clangarm64", "CLANGARM64"),
+        ("mingw32", "MINGW32"),
+    ]
+    .into_iter()
+    .find_map(|(arch, msystem)| {
+        let bin = root.join(arch).join("bin");
+        let program = bin.join("git.exe");
+        if !program.is_file() {
+            return None;
+        }
+        let mut path_prefix = OsString::new();
+        let mut dirs = vec![bin, root.join("usr").join("bin")];
+        dirs.extend(home.map(|home| Path::new(home).join("bin")));
+        for dir in dirs {
+            path_prefix.push(dir.as_os_str());
+            path_prefix.push(";");
+        }
+        Some(GitDirect {
+            program,
+            path_prefix,
+            msystem,
+        })
+    })
+}
+
 /// The Windows lookup of `name` on `path` with the extensions of `pathext` (`;`-separated,
 /// `.COM;.EXE;.BAT;.CMD` when unset): in each directory of `path` in order, the name as given
 /// when it already has an extension of `pathext`, else the name with each extension in turn.
@@ -277,7 +405,7 @@ fn git_sh() -> Option<PathBuf> {
     if let Some(sh) = SH.get() {
         return Some(sh.clone());
     }
-    let mut cmd = Command::new("git");
+    let mut cmd = git();
     cmd.arg("--exec-path");
     let output = crate::git::run_bounded(cmd, "git --exec-path").ok()?;
     let exec_path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -331,8 +459,40 @@ pub fn git_tool(name: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Launch, launch_of, resolve, sh_candidates, sh_word};
+    use super::{Launch, git_behind_launcher, launch_of, resolve, sh_candidates, sh_word};
     use std::ffi::OsStr;
+
+    #[test]
+    fn git_for_windows_launcher_is_skipped_for_the_git_beside_it() {
+        let root = tempfile::tempdir().unwrap();
+        let file = |path: std::path::PathBuf| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap();
+            path
+        };
+        let launcher = file(root.path().join("cmd").join("git.exe"));
+        // No git beside the launcher: it is started as it is.
+        assert!(git_behind_launcher(&launcher, None).is_none());
+        let git = file(root.path().join("mingw64").join("bin").join("git.exe"));
+        let direct = git_behind_launcher(&launcher, Some(OsStr::new("H"))).unwrap();
+        assert_eq!(direct.program, git);
+        assert_eq!(direct.msystem, "MINGW64");
+        let bin = root.path().join("mingw64").join("bin");
+        let usr = root.path().join("usr").join("bin");
+        let home = std::path::Path::new("H").join("bin");
+        assert_eq!(
+            direct.path_prefix,
+            OsStr::new(&format!(
+                "{};{};{};",
+                bin.display(),
+                usr.display(),
+                home.display()
+            ))
+        );
+        // A git.exe in any other directory is not a launcher.
+        let other = file(root.path().join("bin").join("git.exe"));
+        assert!(git_behind_launcher(&other, None).is_none());
+    }
 
     fn dirs() -> (tempfile::TempDir, tempfile::TempDir) {
         (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap())

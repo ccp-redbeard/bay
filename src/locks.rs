@@ -629,7 +629,7 @@ mod tests {
     fn the_attribute_at_the_commit_names_the_lockable_paths() {
         let dir = tempfile::tempdir().unwrap();
         let run = |args: &[&str]| {
-            let out = std::process::Command::new("git")
+            let out = crate::platform::git()
                 .current_dir(dir.path())
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")

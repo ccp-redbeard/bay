@@ -81,10 +81,6 @@ fn a_blocked_session_is_recorded_skipped_and_the_sender_sees_it() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: a timing bound this machine's process starts miss; under investigation"
-)]
 fn a_hung_adapter_is_dropped_within_the_bound_and_the_ack_is_written() {
     let case = with_wake();
     let id = send(&case);

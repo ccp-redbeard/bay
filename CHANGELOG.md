@@ -12,6 +12,8 @@
 - On Windows, a check's observed reads are recorded, so its result is reused.
 - On Windows, `bay install` removes the binary it replaced when nothing still runs it.
 - bay's background work on Windows no longer flashes console windows.
+- On Windows, bay starts Git directly rather than through Git for Windows' launcher, so each call starts faster.
+- On Windows, a hook's caller no longer waits for the background work the hook starts.
 
 ## 0.6.29
 

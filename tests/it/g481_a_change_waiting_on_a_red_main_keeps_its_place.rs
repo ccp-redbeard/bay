@@ -321,10 +321,6 @@ fn a_change_past_the_places_the_red_holds_takes_a_batch() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "Windows: a runner's queue handling differs; under investigation"
-)]
 fn a_head_the_red_holds_outlives_its_progress_deadline() {
     // A progress deadline of four seconds: a head that makes no progress for that long is
     // released, but one main's red holds waits for main, not for its own work.

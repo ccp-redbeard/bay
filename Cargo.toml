@@ -27,7 +27,7 @@ predicates = "3.1.4"
 tempfile = "3.27.0"
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

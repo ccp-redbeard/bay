@@ -9109,7 +9109,6 @@ pub fn retain(repo: &Repo, id: &str) -> Result<Option<String>, String> {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::process::Command;
 
     use super::{UNCHECKED, UNCHECKED_BY_POLICY, unchecked_reason};
     use crate::git::Git;
@@ -9237,7 +9236,7 @@ mod tests {
     const UNCHECKED_POLICY: &str = "revision = 1\nunchecked = true\n";
 
     fn git(dir: &Path, args: &[&str]) -> String {
-        let out = Command::new("git")
+        let out = crate::platform::git()
             .current_dir(dir)
             .args(["-c", "user.name=t", "-c", "user.email=t@bay.invalid"])
             .args(args)
