@@ -1107,10 +1107,17 @@ pub fn sh() -> StdCommand {
     StdCommand::new(sh_program())
 }
 
-/// The real git this machine runs, as a path a shell script can name.
+/// The real git this machine runs, as a path a shell script can name. On Windows the git bay
+/// starts (`bay::platform::git`), not Git for Windows' launcher: the launcher would cost every
+/// call through the box's `git` one more process start than bay's own calls cost.
 fn real_git() -> PathBuf {
     if cfg!(windows) {
-        let git = bay::platform::program("git");
+        let direct = PathBuf::from(bay::platform::git().get_program());
+        let git = if direct.is_absolute() {
+            direct
+        } else {
+            bay::platform::program("git")
+        };
         assert!(git.is_absolute(), "no git.exe on PATH");
         return PathBuf::from(git.to_str().unwrap().replace('\\', "/"));
     }

@@ -518,6 +518,14 @@ fn a_policy_removed_and_added_again_outside_bay_is_no_bootstrap() {
     );
 }
 
+/// The `PATH` a check sees under `path = ["/usr/bin", "/bin"]`, the stated default. On Windows,
+/// where Git's `usr/bin` holds no `git.exe`, bay puts Git's `/mingw64/bin` just before it.
+const DEFAULT_PATH: &str = if cfg!(windows) {
+    "/mingw64/bin:/usr/bin:/bin"
+} else {
+    "/usr/bin:/bin"
+};
+
 /// Lands a change under a check whose policy entry ends with `fields` and whose adapter
 /// first runs `before`; the executor's environment adds `env`.
 fn land_with_environment(
@@ -557,7 +565,7 @@ fn a_check_sees_only_the_fixed_baseline_and_its_declared_variables() {
     let before = format!(
         "[ -z \"$UNDECLARED_VAR\" ] || {{ echo inherited UNDECLARED_VAR >&2; exit 3; }}\n\
          [ \"$DECLARED_VAR\" = declared ] || {{ echo no DECLARED_VAR >&2; exit 3; }}\n\
-         [ \"$PATH\" = /usr/bin:/bin ] || {{ echo PATH is $PATH >&2; exit 3; }}\n\
+         [ \"$PATH\" = {DEFAULT_PATH} ] || {{ echo PATH is $PATH >&2; exit 3; }}\n\
          [ \"$LANG\" = C.UTF-8 ] || {{ echo LANG is $LANG >&2; exit 3; }}\n\
          [ -n \"$HOME\" ] && [ \"$HOME\" != '{home}' ] && touch \"$HOME/written\" || {{ echo HOME is $HOME >&2; exit 3; }}\n\
          [ -n \"$TMPDIR\" ] && touch \"$TMPDIR/written\" || {{ echo TMPDIR is $TMPDIR >&2; exit 3; }}"
@@ -594,7 +602,7 @@ fn a_check_without_path_runs_under_the_stated_default_path() {
     // policy does not name.
     let (code, result) = land_with_environment(
         "",
-        "[ \"$PATH\" = /usr/bin:/bin ] || { echo PATH is $PATH >&2; exit 3; }",
+        &format!("[ \"$PATH\" = {DEFAULT_PATH} ] || {{ echo PATH is $PATH >&2; exit 3; }}"),
         &[],
     );
     assert_eq!(code, 0, "{result}");
