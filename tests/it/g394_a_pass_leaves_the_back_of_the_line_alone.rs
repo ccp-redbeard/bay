@@ -13,8 +13,10 @@ use support::queued::{Check, OTHER_PRODUCER, finished, host};
 
 #[test]
 fn a_pass_leaves_changes_far_back_in_the_line_alone() {
+    // A's head must stay held while B's pass watches it: a lease of 30 s outlasts any gap
+    // between A's heartbeats, however long the host takes over each push.
     let held = host(&Check {
-        config: "[runner]\nahead = 0\n",
+        config: "[runner]\nlease_s = 30\nheartbeat_s = 1\nahead = 0\n",
         policy: None,
         seed: &[("src/a.rs", "fn a() {}\n")],
         hold_first: true,
