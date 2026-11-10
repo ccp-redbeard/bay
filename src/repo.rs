@@ -64,7 +64,8 @@ impl Bootstrap {
         }
         let head = format!("refs/remotes/{remote}/HEAD");
         let prefix = format!("refs/remotes/{remote}/");
-        match git.run(&["symbolic-ref", "-q", &head]) {
+        // Read once per process until bay itself may move it (G200, [`Git::remote_head`]).
+        match git.remote_head(&remote) {
             Ok(target) => match target.strip_prefix(&prefix) {
                 Some(trunk) if !trunk.is_empty() && trunk != "HEAD" => Ok(Self {
                     trunk: trunk.to_owned(),
@@ -100,17 +101,18 @@ impl Bootstrap {
 
 /// Asks the remote for its default branch now (`git remote set-head <remote> --auto`); whether
 /// `refs/remotes/<remote>/HEAD` moved off the bootstrap's main. Offline, or unmoved, it did not.
+/// The bootstrap's main is what this process read, which another process may have moved since
+/// (G200, [`Git::remote_head`]): compared with it, a default moved by either reads as moved.
 fn refresh_default(git: &Git, bootstrap: &Bootstrap) -> bool {
-    let head = format!("refs/remotes/{}/HEAD", bootstrap.remote);
-    let before = git.run(&["symbolic-ref", "-q", &head]).ok();
     if git
         .run(&["remote", "set-head", &bootstrap.remote, "--auto"])
         .is_err()
     {
         return false;
     }
-    let after = git.run(&["symbolic-ref", "-q", &head]).ok();
-    after.is_some() && after != before
+    // `set-head` has the default read again.
+    git.remote_head(&bootstrap.remote)
+        .is_ok_and(|after| after != bootstrap.tracking_ref())
 }
 
 /// A key of the repository-local git config (`$GIT_COMMON_DIR/config`); `None` when unset.
@@ -1061,6 +1063,64 @@ mod tests {
             .unwrap_or_else(|error| panic!("{}", error.message()));
         assert_eq!(repo.trunk_tracking_ref(), "refs/remotes/origin/release");
         assert_eq!(repo.bootstrap.source, "git config bay.main");
+    }
+
+    /// G200: the remote's default branch is read once per process, until bay itself runs a call
+    /// that may move it; then the next read asks Git again. (That a move by another process
+    /// keeps what this one read is not asserted here: the unit tests share one process, and
+    /// another test's write has the default read again.)
+    #[test]
+    fn the_remotes_default_is_read_again_after_bay_may_have_moved_it() {
+        use super::Bootstrap;
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "trunk"]);
+        for branch in ["main", "dev", "next"] {
+            git(
+                &root,
+                &[
+                    "update-ref",
+                    &format!("refs/remotes/origin/{branch}"),
+                    "HEAD",
+                ],
+            );
+        }
+        let point = |branch: &str| {
+            [
+                "symbolic-ref".to_owned(),
+                "refs/remotes/origin/HEAD".to_owned(),
+                format!("refs/remotes/origin/{branch}"),
+            ]
+        };
+        let trunk = || match Bootstrap::of(&root) {
+            Some(Ok(bootstrap)) => bootstrap.trunk,
+            _ => panic!("no bootstrap"),
+        };
+        let [a, b, c] = point("main");
+        git(&root, &[&a, &b, &c]);
+        assert_eq!(trunk(), "main");
+        // Moved by bay itself: read again.
+        let common = crate::git::Git::new(root.join(".git"));
+        let [a, b, c] = point("next");
+        common.run(&[&a, &b, &c]).unwrap();
+        assert_eq!(trunk(), "next", "bay's own write left the old default");
+        common
+            .run(&["remote", "add", "origin", "https://example.invalid/r.git"])
+            .unwrap();
+        let [a, b, c] = point("dev");
+        git(&root, &[&a, &b, &c]);
+        // A `remote` call other than `get-url` may move it too (`set-head`).
+        common
+            .run(&[
+                "remote",
+                "set-url",
+                "origin",
+                "https://example.invalid/s.git",
+            ])
+            .unwrap();
+        assert_eq!(trunk(), "dev", "a remote call left the old default");
     }
 
     /// S1: a runner places new changes on its heartbeat thread while the pass's thread runs a

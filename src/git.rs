@@ -126,6 +126,16 @@ static SNAPSHOTS: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, O
 /// G200: the common directory of each directory a handle asked, by the path it was given.
 static COMMON_DIRS: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new());
 
+/// G200: how many calls this process has run that may move a remote's default branch,
+/// `refs/remotes/<remote>/HEAD` ([`moves_remote_head`]). A default read before the latest one
+/// is read again.
+static REMOTE_HEAD_WRITES: AtomicU64 = AtomicU64::new(0);
+
+/// G200: the default branch each directory's remote named ([`Git::remote_head`]), by directory
+/// and remote, with the [`REMOTE_HEAD_WRITES`] it was read at.
+static REMOTE_HEADS: Mutex<BTreeMap<(PathBuf, String), (u64, String)>> =
+    Mutex::new(BTreeMap::new());
+
 /// Formats and location of a repository, as reported by Git.
 pub struct RepoInfo {
     /// The work tree, or the git directory of a bare repository.
@@ -383,6 +393,38 @@ impl Git {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(self.dir.clone(), common.clone());
         Ok(common)
+    }
+
+    /// `symbolic-ref -q refs/remotes/<remote>/HEAD`: the ref the remote's default branch names
+    /// here, read once per process for each directory and remote (an agent hook opened its
+    /// repository five times and read it each time). Only `git remote set-head`, a fetch that
+    /// follows the remote's HEAD (`remote.<name>.followRemoteHEAD`) or a ref write moves it,
+    /// so any such call this process runs ([`moves_remote_head`]) has it read again. One moved
+    /// by another process is seen by the next process; a reader that must ask the remote
+    /// (`crate::repo`'s `refresh_default`) runs `remote set-head`, which reads it again. An
+    /// answer Git gives no name for (unset, not a symbolic ref) is never kept.
+    ///
+    /// # Errors
+    ///
+    /// See [`Git::run`].
+    pub fn remote_head(&self, remote: &str) -> Result<String, GitError> {
+        let key = (self.dir.clone(), remote.to_owned());
+        let writes = REMOTE_HEAD_WRITES.load(Ordering::SeqCst);
+        if let Some((at, target)) = REMOTE_HEADS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+            && *at == writes
+        {
+            return Ok(target.clone());
+        }
+        let target = self.run(&["symbolic-ref", "-q", &format!("refs/remotes/{remote}/HEAD")])?;
+        // Kept at the count read before the call: a write that ran meanwhile has it read again.
+        REMOTE_HEADS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, (writes, target.clone()));
+        Ok(target)
     }
 
     /// Runs `git <args>` and returns trimmed stdout.
@@ -1208,6 +1250,33 @@ fn writes_config(cmd: &Command) -> bool {
     !read
 }
 
+/// G200: whether `cmd` is a `git` call that may move a remote's default branch
+/// (`refs/remotes/<remote>/HEAD`): any `remote` call but `get-url`, a fetch, pull or clone (Git
+/// 2.48 and later may follow the remote's HEAD as it fetches), a ref write (`update-ref`,
+/// `branch`), and any `symbolic-ref` but a read of one name. Every [`Git::remote_head`] is
+/// then read again.
+fn moves_remote_head(cmd: &Command) -> bool {
+    if !crate::platform::is_git(cmd.get_program()) {
+        return false;
+    }
+    let args = args_of(cmd);
+    let Some(at) = subcommand_at(&args) else {
+        return false;
+    };
+    let rest = &args[at + 1..];
+    match &*args[at] {
+        "fetch" | "pull" | "clone" | "update-ref" | "branch" => true,
+        "remote" => rest.first().is_none_or(|first| first != "get-url"),
+        "symbolic-ref" => {
+            let delete = rest.iter().any(|arg| arg == "-d" || arg == "--delete");
+            // `-m <reason>` comes only with a write; every other option stands alone.
+            let names = rest.iter().filter(|arg| !arg.starts_with('-')).count();
+            delete || names != 1 || rest.iter().any(|arg| arg == "-m")
+        }
+        _ => false,
+    }
+}
+
 /// The key `git config --list` would print for `key` when it is a plain key of bay's own
 /// section (`bay.<name>`, no subsection), section and name in lower case; `None` otherwise.
 fn bay_key(key: &str) -> Option<Vec<u8>> {
@@ -1526,6 +1595,9 @@ pub fn run_bounded_for(
     // Counted however the call ended: a write that timed out may have landed.
     if writes_config(&cmd) {
         CONFIG_WRITES.fetch_add(1, Ordering::SeqCst);
+    }
+    if moves_remote_head(&cmd) {
+        REMOTE_HEAD_WRITES.fetch_add(1, Ordering::SeqCst);
     }
     trace_input(
         &cmd,

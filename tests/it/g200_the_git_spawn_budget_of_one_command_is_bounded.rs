@@ -2,7 +2,8 @@
 //! `bay start` on a small repository spawn at most a stated number of `git` processes, read
 //! from the trace a test build writes when `BAY_TEST_GIT_TRACE` names a file (G171). Each
 //! command lists its repository's config once per handle it opens, never one `git config`
-//! per key, so its `config` spawns stay within a handful however many keys it reads.
+//! per key, so its `config` spawns stay within a handful however many keys it reads. It reads
+//! the remote's default branch once, however many times it opens its repository.
 
 use crate::support;
 
@@ -195,5 +196,62 @@ fn a_named_status_costs_the_same_however_many_other_views_are_open() {
     assert!(
         with_six <= with_two,
         "bay status {named} spawned more git processes as other views opened ({one}, {two}, …): {with_two} with two, {with_six} with six"
+    );
+}
+
+/// A Windows trace (a git spawn there costs tens of milliseconds): one `turn.start` hook opened
+/// its repository five times and read the remote's default branch, `refs/remotes/origin/HEAD`,
+/// at each. A process reads it once, and again only after a call of its own that may move it.
+///
+/// Guard to mutate: `src/git.rs` `Git::remote_head`: read on every call.
+#[test]
+fn a_hook_reads_the_remotes_default_branch_once() {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let test_box = TestBox::new();
+    let repo = seeded(&test_box);
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/claude-code-2.1.302/02-UserPromptSubmit.json");
+    let mut payload: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture).unwrap()).unwrap();
+    payload["session_id"] = serde_json::json!("s-g200");
+    payload["cwd"] = serde_json::json!(repo);
+    let trace = test_box.path().join("hook-trace.jsonl");
+    let mut child = test_box
+        .bay_process(&repo)
+        .args(["hook", "turn.start"])
+        .env("BAY_TEST_GIT_TRACE", &trace)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let text = std::fs::read_to_string(&trace).expect("the trace was written");
+    let reads: Vec<&str> = text
+        .lines()
+        .filter(|line| {
+            let line: Value = serde_json::from_str(line).unwrap();
+            line["pid"] == pid
+                && line["sub"] == "symbolic-ref"
+                && line["args"]
+                    .as_array()
+                    .is_some_and(|args| args.iter().any(|arg| arg == "refs/remotes/origin/HEAD"))
+        })
+        .collect();
+    assert_eq!(
+        reads.len(),
+        1,
+        "the hook read the remote's default branch {} times: {reads:#?}",
+        reads.len()
     );
 }
