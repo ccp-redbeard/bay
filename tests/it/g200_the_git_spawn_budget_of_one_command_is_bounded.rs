@@ -3,7 +3,8 @@
 //! from the trace a test build writes when `BAY_TEST_GIT_TRACE` names a file (G171). Each
 //! command lists its repository's config once per handle it opens, never one `git config`
 //! per key, so its `config` spawns stay within a handful however many keys it reads. It reads
-//! the remote's default branch once, however many times it opens its repository.
+//! the remote's default branch once, however many times it opens its repository, and an agent
+//! hook also asks once where its repository is and reads its trunk's tip once.
 
 use crate::support;
 
@@ -199,28 +200,32 @@ fn a_named_status_costs_the_same_however_many_other_views_are_open() {
     );
 }
 
-/// A Windows trace (a git spawn there costs tens of milliseconds): one `turn.start` hook opened
-/// its repository five times and read the remote's default branch, `refs/remotes/origin/HEAD`,
-/// at each. A process reads it once, and again only after a call of its own that may move it.
-///
-/// Guard to mutate: `src/git.rs` `Git::remote_head`: read on every call.
-#[test]
-fn a_hook_reads_the_remotes_default_branch_once() {
+/// The `git` calls `bay hook <event>` made itself, in a seeded repository, given the recorded
+/// payload `fixture` with this repository as its `cwd` and in place of `<repo>`. The repository
+/// is named as the operating system names it, so every path the hook derives from the payload
+/// spells it the same way.
+fn hook_calls(event: &str, fixture: &str) -> Vec<Value> {
     use std::io::Write as _;
     use std::process::Stdio;
 
     let test_box = TestBox::new();
-    let repo = seeded(&test_box);
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/claude-code-2.1.302/02-UserPromptSubmit.json");
-    let mut payload: Value =
-        serde_json::from_str(&std::fs::read_to_string(fixture).unwrap()).unwrap();
+    let repo = std::fs::canonicalize(seeded(&test_box)).unwrap();
+    // Windows puts `\\?\` before a canonical path, which no agent product sends.
+    let repo = std::path::PathBuf::from(repo.to_str().unwrap().trim_start_matches(r"\\?\"));
+    let recorded = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/claude-code-2.1.302")
+        .join(fixture);
+    let slashed = repo.to_str().unwrap().replace('\\', "/");
+    let text = std::fs::read_to_string(recorded)
+        .unwrap()
+        .replace("<repo>", &slashed);
+    let mut payload: Value = serde_json::from_str(&text).unwrap();
     payload["session_id"] = serde_json::json!("s-g200");
     payload["cwd"] = serde_json::json!(repo);
     let trace = test_box.path().join("hook-trace.jsonl");
     let mut child = test_box
         .bay_process(&repo)
-        .args(["hook", "turn.start"])
+        .args(["hook", event])
         .env("BAY_TEST_GIT_TRACE", &trace)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -236,22 +241,70 @@ fn a_hook_reads_the_remotes_default_branch_once() {
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let text = std::fs::read_to_string(&trace).expect("the trace was written");
-    let reads: Vec<&str> = text
+    std::fs::read_to_string(&trace)
+        .expect("the trace was written")
         .lines()
-        .filter(|line| {
-            let line: Value = serde_json::from_str(line).unwrap();
-            line["pid"] == pid
-                && line["sub"] == "symbolic-ref"
-                && line["args"]
-                    .as_array()
-                    .is_some_and(|args| args.iter().any(|arg| arg == "refs/remotes/origin/HEAD"))
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|line| line["pid"] == pid)
+        .collect()
+}
+
+/// The calls among `calls` with an argument that `matches`.
+fn with_arg(calls: &[Value], matches: impl Fn(&str) -> bool) -> Vec<&Value> {
+    calls
+        .iter()
+        .filter(|call| {
+            call["args"]
+                .as_array()
+                .is_some_and(|args| args.iter().filter_map(Value::as_str).any(&matches))
         })
-        .collect();
+        .collect()
+}
+
+/// A Windows trace (a git spawn there costs tens of milliseconds): one hook opened its
+/// repository five times and read the remote's default branch, `refs/remotes/origin/HEAD`, at
+/// each. A process reads it once, and again only once a ref may have moved: after a call of
+/// its own that may move one, or after a hook's wait for its poll. The hook at a turn's end
+/// starts no poll.
+///
+/// Guard to mutate: `src/git.rs` `Git::remote_head`: read on every call.
+#[test]
+fn a_hook_reads_the_remotes_default_branch_once() {
+    let calls = hook_calls("turn.end", "09-Stop.json");
+    let reads = with_arg(&calls, |arg| arg == "refs/remotes/origin/HEAD");
     assert_eq!(
         reads.len(),
         1,
         "the hook read the remote's default branch {} times: {reads:#?}",
         reads.len()
+    );
+}
+
+/// The same trace: the hook before a tool call made 14 `git` calls. Six read the tip of the
+/// trunk, one at each open of the repository, and three asked where the repository is, once
+/// for each spelling of its folder (`.`, the payload's `cwd`, the written file's folder). The
+/// hook runs before every tool call, so half its run was reads it had just made. A hook reads
+/// the tip once and asks once.
+///
+/// Guards to mutate: `src/main.rs` `Command::Hook`: never call `keep_one_tip`; `src/git.rs`
+/// `Git::common_dir`: key by the path as given.
+#[test]
+fn a_tool_hook_reads_its_trunk_once_and_asks_once_where_its_repository_is() {
+    let calls = hook_calls("tool.before", "03-PreToolUse.json");
+    let tips = with_arg(&calls, |arg| {
+        arg.starts_with("refs/remotes/origin/main^{commit}")
+    });
+    assert_eq!(
+        tips.len(),
+        1,
+        "the hook read the trunk's tip {} times: {tips:#?}",
+        tips.len()
+    );
+    let asked = with_arg(&calls, |arg| arg == "--git-common-dir");
+    assert_eq!(
+        asked.len(),
+        1,
+        "the hook asked {} times where its repository is: {asked:#?}",
+        asked.len()
     );
 }

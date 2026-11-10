@@ -990,6 +990,9 @@ fn main() -> ExitCode {
             // what it says.
             if let Some(budget) = bay::agent_hook::budget(&event) {
                 bay::deadline::set(std::time::Instant::now() + budget);
+                // G200: a hook with a budget ends within moments, so it reads its trunk's tip
+                // once. The two moments that wait for the remote read it at each open.
+                bay::repo::keep_one_tip();
             }
             // The agent hook follows the agent product's exit protocol (INTERFACES § 1): for
             // Claude Code, exit 2 denies. The payload adapter decides (agent_hook.rs).

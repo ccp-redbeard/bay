@@ -386,6 +386,27 @@ pub fn sh_word(path: &Path) -> String {
     text.replace('\\', "/")
 }
 
+/// `path` as a key that every spelling of one directory shares: absolute, with no `.` in it.
+/// On Windows also as Windows itself reads a path (`\` for `/`, no `..`), and with no verbatim
+/// `\\?\` prefix, which `canonicalize` puts before the same path. No link is followed, and a
+/// path that cannot be made absolute stays as given.
+#[must_use]
+pub fn key_path(path: &Path) -> PathBuf {
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    if !cfg!(windows) {
+        return path;
+    }
+    let plain = path.to_str().and_then(|text| {
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return Some(PathBuf::from(format!(r"\\{rest}")));
+        }
+        text.strip_prefix(r"\\?\")
+            .filter(|rest| rest.as_bytes().get(1) == Some(&b':'))
+            .map(PathBuf::from)
+    });
+    plain.unwrap_or(path)
+}
+
 /// An argument for a plugin, which may be a script `sh.exe` runs: on Windows a verbatim path
 /// (`\\?\C:\...`, as `canonicalize` gives) as [`sh_word`] spells it, which sh and Windows
 /// programs alike open; any other argument as it is.
@@ -397,25 +418,51 @@ pub fn plain_arg(arg: &OsStr) -> OsString {
     }
 }
 
-/// Git for Windows' `sh.exe`, found from `git --exec-path` once it is found: a lookup that
+/// Git for Windows' `sh.exe`, found from Git's exec path once it is found: a lookup that
 /// fails (a `git` that timed out, say) is tried again by the next caller, so a long-running
 /// runner is never left without a shell until it restarts.
+///
+/// The exec path is the one beside the git bay starts ([`direct_exec_path`]) when that holds a
+/// shell, with no process started for it; else what `git --exec-path` says.
 fn git_sh() -> Option<PathBuf> {
     static SH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     if let Some(sh) = SH.get() {
         return Some(sh.clone());
     }
-    let mut cmd = git();
-    cmd.arg("--exec-path");
-    let output = crate::git::run_bounded(cmd, "git --exec-path").ok()?;
-    let exec_path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() || exec_path.is_empty() {
+    let beside = |exec_path: &Path| {
+        sh_candidates(exec_path)
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+    };
+    let sh = if let Some(sh) = direct_exec_path().and_then(|exec_path| beside(&exec_path)) {
+        sh
+    } else {
+        let mut cmd = git();
+        cmd.arg("--exec-path");
+        let output = crate::git::run_bounded(cmd, "git --exec-path").ok()?;
+        let exec_path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !output.status.success() || exec_path.is_empty() {
+            return None;
+        }
+        beside(Path::new(&exec_path))?
+    };
+    Some(SH.get_or_init(|| sh).clone())
+}
+
+/// What `git --exec-path` prints for the git that [`git`] starts directly: Git for Windows
+/// keeps its programs in `<root>\<arch>\libexec\git-core`, beside the `bin` that holds
+/// `git.exe`. `None` when `GIT_EXEC_PATH` names another place, which Git then reports, or when
+/// bay starts `git` by name.
+fn direct_exec_path() -> Option<PathBuf> {
+    if std::env::var_os("GIT_EXEC_PATH").is_some() {
         return None;
     }
-    let sh = sh_candidates(Path::new(&exec_path))
-        .into_iter()
-        .find(|candidate| candidate.is_file())?;
-    Some(SH.get_or_init(|| sh).clone())
+    exec_path_beside(&git_direct()?.program)
+}
+
+/// `<root>\<arch>\libexec\git-core` for the git at `<root>\<arch>\bin\git.exe`.
+fn exec_path_beside(git: &Path) -> Option<PathBuf> {
+    Some(git.parent()?.parent()?.join("libexec").join("git-core"))
 }
 
 /// Has `cmd`, when it starts Git for Windows' `sh.exe`, pass its arguments as given. sh.exe
@@ -494,6 +541,19 @@ mod tests {
         assert!(git_behind_launcher(&other, None).is_none());
     }
 
+    /// The shell is found beside the git bay starts, as `git --exec-path` would lead to it.
+    #[test]
+    fn the_exec_path_beside_a_direct_git_leads_to_its_shell() {
+        let root = std::path::Path::new("Git");
+        let git = root.join("mingw64").join("bin").join("git.exe");
+        let exec_path = super::exec_path_beside(&git).unwrap();
+        assert_eq!(
+            exec_path,
+            root.join("mingw64").join("libexec").join("git-core")
+        );
+        assert!(sh_candidates(&exec_path).contains(&root.join("usr").join("bin").join("sh.exe")));
+    }
+
     fn dirs() -> (tempfile::TempDir, tempfile::TempDir) {
         (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap())
     }
@@ -530,6 +590,25 @@ mod tests {
         assert_eq!(sh_word(path(r"C:\a\script")), "C:/a/script");
         assert_eq!(sh_word(path(r"\\?\UNC\host\share\s")), "//host/share/s");
         assert_eq!(sh_word(path("/usr/bin/script")), "/usr/bin/script");
+    }
+
+    /// Each spelling of one directory gives one key, so it is asked about once.
+    #[test]
+    fn every_spelling_of_a_directory_has_one_key() {
+        let here = std::env::current_dir().unwrap();
+        assert_eq!(super::key_path(std::path::Path::new(".")), here);
+        assert_eq!(super::key_path(&here.join(".")), here);
+        if cfg!(windows) {
+            let key = |text: &str| super::key_path(std::path::Path::new(text));
+            let plain = std::path::Path::new(r"C:\a\b");
+            assert_eq!(key(r"\\?\C:\a\b"), plain);
+            assert_eq!(key("C:/a/b"), plain);
+            assert_eq!(key(r"C:\a\x\..\b"), plain);
+            assert_eq!(
+                key(r"\\?\UNC\host\share\b"),
+                std::path::Path::new(r"\\host\share\b")
+            );
+        }
     }
 
     #[test]

@@ -123,16 +123,21 @@ static CONFIG_WRITES: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOTS: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, Option<Snapshot>>>> =
     std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
-/// G200: the common directory of each directory a handle asked, by the path it was given.
+/// G200: the common directory of each directory a handle asked, by its absolute path
+/// (`crate::platform::key_path`).
 static COMMON_DIRS: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new());
 
-/// G200: how many calls this process has run that may move a remote's default branch,
-/// `refs/remotes/<remote>/HEAD` ([`moves_remote_head`]). A default read before the latest one
-/// is read again.
-static REMOTE_HEAD_WRITES: AtomicU64 = AtomicU64::new(0);
+/// G200: the top of the work tree of each directory a handle asked ([`Git::toplevel`]), by its
+/// absolute path (`crate::platform::key_path`).
+static TOPLEVELS: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new());
+
+/// G200: how many times a ref may have moved under this process: once for each `git` call of
+/// its own that may move one ([`may_move_refs`]), and once each time a caller says another
+/// process may have ([`refs_may_have_moved`]). A ref read kept before the latest is read again.
+static REF_MOVES: AtomicU64 = AtomicU64::new(0);
 
 /// G200: the default branch each directory's remote named ([`Git::remote_head`]), by directory
-/// and remote, with the [`REMOTE_HEAD_WRITES`] it was read at.
+/// and remote, with the [`REF_MOVES`] it was read at.
 static REMOTE_HEADS: Mutex<BTreeMap<(PathBuf, String), (u64, String)>> =
     Mutex::new(BTreeMap::new());
 
@@ -379,11 +384,14 @@ impl Git {
     ///
     /// See [`Git::run`].
     pub fn common_dir(&self) -> Result<String, GitError> {
+        // One directory is asked under several spellings (`.`, its full path, the path an
+        // agent's payload names): its absolute path is the key, so each asks Git once.
+        let key = crate::platform::key_path(&self.dir);
         if self.dir.is_dir()
             && let Some(known) = COMMON_DIRS
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .get(&self.dir)
+                .get(&key)
         {
             return Ok(known.clone());
         }
@@ -391,39 +399,65 @@ impl Git {
         COMMON_DIRS
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(self.dir.clone(), common.clone());
+            .insert(key, common.clone());
         Ok(common)
+    }
+
+    /// `rev-parse --show-toplevel`: the top of the work tree that holds this handle's directory,
+    /// asked once per process for each directory, as [`Git::common_dir`] is: a directory's work
+    /// tree does not move while bay runs (one `bay status` asked five times). A directory that
+    /// is in no work tree, or is gone, is asked again.
+    ///
+    /// # Errors
+    ///
+    /// See [`Git::run`].
+    pub fn toplevel(&self) -> Result<String, GitError> {
+        let key = crate::platform::key_path(&self.dir);
+        if self.dir.is_dir()
+            && let Some(known) = TOPLEVELS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&key)
+        {
+            return Ok(known.clone());
+        }
+        let top = self.run(&["rev-parse", "--show-toplevel"])?;
+        TOPLEVELS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, top.clone());
+        Ok(top)
     }
 
     /// `symbolic-ref -q refs/remotes/<remote>/HEAD`: the ref the remote's default branch names
     /// here, read once per process for each directory and remote (an agent hook opened its
     /// repository five times and read it each time). Only `git remote set-head`, a fetch that
     /// follows the remote's HEAD (`remote.<name>.followRemoteHEAD`) or a ref write moves it,
-    /// so any such call this process runs ([`moves_remote_head`]) has it read again. One moved
-    /// by another process is seen by the next process; a reader that must ask the remote
-    /// (`crate::repo`'s `refresh_default`) runs `remote set-head`, which reads it again. An
-    /// answer Git gives no name for (unset, not a symbolic ref) is never kept.
+    /// so any call this process runs that may move a ref ([`may_move_refs`]) has it read
+    /// again. One moved by another process is seen by the next process; a reader that must ask
+    /// the remote (`crate::repo`'s `refresh_default`) runs `remote set-head`, which reads it
+    /// again. An answer Git gives no name for (unset, not a symbolic ref) is never kept.
     ///
     /// # Errors
     ///
     /// See [`Git::run`].
     pub fn remote_head(&self, remote: &str) -> Result<String, GitError> {
         let key = (self.dir.clone(), remote.to_owned());
-        let writes = REMOTE_HEAD_WRITES.load(Ordering::SeqCst);
+        let moves = ref_moves();
         if let Some((at, target)) = REMOTE_HEADS
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&key)
-            && *at == writes
+            && *at == moves
         {
             return Ok(target.clone());
         }
         let target = self.run(&["symbolic-ref", "-q", &format!("refs/remotes/{remote}/HEAD")])?;
-        // Kept at the count read before the call: a write that ran meanwhile has it read again.
+        // Kept at the count read before the call: a move that came meanwhile has it read again.
         REMOTE_HEADS
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(key, (writes, target.clone()));
+            .insert(key, (moves, target.clone()));
         Ok(target)
     }
 
@@ -1250,12 +1284,23 @@ fn writes_config(cmd: &Command) -> bool {
     !read
 }
 
-/// G200: whether `cmd` is a `git` call that may move a remote's default branch
-/// (`refs/remotes/<remote>/HEAD`): any `remote` call but `get-url`, a fetch, pull or clone (Git
-/// 2.48 and later may follow the remote's HEAD as it fetches), a ref write (`update-ref`,
-/// `branch`), and any `symbolic-ref` but a read of one name. Every [`Git::remote_head`] is
-/// then read again.
-fn moves_remote_head(cmd: &Command) -> bool {
+/// G200: the count a kept ref read is good for ([`REF_MOVES`]): a read kept at an older count
+/// is read again.
+pub(crate) fn ref_moves() -> u64 {
+    REF_MOVES.load(Ordering::SeqCst)
+}
+
+/// G200: says a ref may have moved with no `git` call of this process: a process it waited for
+/// has ended, and what that one fetched or wrote is read from here on.
+pub fn refs_may_have_moved() {
+    REF_MOVES.fetch_add(1, Ordering::SeqCst);
+}
+
+/// G200: whether `cmd` is a `git` call that may move a ref. Every call may, but the ones known
+/// to read only, or to write nothing but objects, the index or config: those are named here,
+/// so a subcommand bay starts to use counts as a move until it is listed. `remote get-url` and
+/// a `symbolic-ref` of one name read; any other form of either may move a ref.
+fn may_move_refs(cmd: &Command) -> bool {
     if !crate::platform::is_git(cmd.get_program()) {
         return false;
     }
@@ -1265,7 +1310,11 @@ fn moves_remote_head(cmd: &Command) -> bool {
     };
     let rest = &args[at + 1..];
     match &*args[at] {
-        "fetch" | "pull" | "clone" | "update-ref" | "branch" => true,
+        "--version" | "cat-file" | "check-attr" | "check-ref-format" | "cherry" | "commit-tree"
+        | "config" | "credential" | "diff" | "diff-tree" | "for-each-ref" | "hash-object"
+        | "log" | "ls-files" | "ls-remote" | "ls-tree" | "merge-base" | "merge-tree" | "mktree"
+        | "patch-id" | "read-tree" | "rev-list" | "rev-parse" | "show" | "show-ref" | "status"
+        | "update-index" | "write-tree" => false,
         "remote" => rest.first().is_none_or(|first| first != "get-url"),
         "symbolic-ref" => {
             let delete = rest.iter().any(|arg| arg == "-d" || arg == "--delete");
@@ -1273,7 +1322,7 @@ fn moves_remote_head(cmd: &Command) -> bool {
             let names = rest.iter().filter(|arg| !arg.starts_with('-')).count();
             delete || names != 1 || rest.iter().any(|arg| arg == "-m")
         }
-        _ => false,
+        _ => true,
     }
 }
 
@@ -1588,16 +1637,17 @@ pub fn run_bounded_for(
         .stderr
         .take()
         .ok_or(GitError::UnexpectedOutput("stderr pipe is missing"))?;
-    let stdout_handle = reader(stdout);
-    let stderr_handle = reader(stderr);
+    let (closed, ends) = std::sync::mpsc::channel();
+    let stdout_handle = reader(stdout, closed.clone());
+    let stderr_handle = reader(stderr, closed);
 
-    let status = wait_until(&mut child, display, timeout);
+    let status = wait_until(&mut child, display, timeout, &ends);
     // Counted however the call ended: a write that timed out may have landed.
     if writes_config(&cmd) {
         CONFIG_WRITES.fetch_add(1, Ordering::SeqCst);
     }
-    if moves_remote_head(&cmd) {
-        REMOTE_HEAD_WRITES.fetch_add(1, Ordering::SeqCst);
+    if may_move_refs(&cmd) {
+        REF_MOVES.fetch_add(1, Ordering::SeqCst);
     }
     trace_input(
         &cmd,
@@ -1632,7 +1682,9 @@ struct Reader {
     done: std::sync::mpsc::Receiver<std::io::Result<()>>,
 }
 
-fn reader(mut pipe: impl Read + Send + 'static) -> Reader {
+/// Reads `pipe` to its end, and then says so on `closed`: the process that held it has
+/// exited or is about to, so [`wait_until`] looks at once.
+fn reader(mut pipe: impl Read + Send + 'static, closed: std::sync::mpsc::Sender<()>) -> Reader {
     let read = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let (send, done) = std::sync::mpsc::channel();
     let into = std::sync::Arc::clone(&read);
@@ -1651,6 +1703,7 @@ fn reader(mut pipe: impl Read + Send + 'static) -> Reader {
             }
         };
         let _ = send.send(ended);
+        let _ = closed.send(());
     });
     Reader { read, done }
 }
@@ -1667,15 +1720,26 @@ fn join_bytes(handle: &Reader) -> Result<Vec<u8>, GitError> {
     Ok(read.clone())
 }
 
+/// Waits for `child` to exit, killing it when `timeout` elapses. `ends` hears each of the
+/// child's two output pipes close ([`reader`]).
+///
+/// A process closes its pipes as it exits, so the wait sleeps on `ends` and looks the moment
+/// both have closed: the call returns as the child ends, not at the next look. A fixed 20 ms
+/// pause cost every call about that much (G171), and a pause that doubles from 1 ms still
+/// looks at 15 ms and then at 31 ms: a call that ended at 16 ms, as most do where a process
+/// is slow to start, waited as long again. A child whose pipe stays open after it (one it
+/// started holds it, [`PIPE_GRACE`]), or that closes its output and runs on, is still found
+/// by the doubling pause.
 fn wait_until(
     child: &mut std::process::Child,
     args: &str,
     timeout: std::time::Duration,
+    ends: &std::sync::mpsc::Receiver<()>,
 ) -> Result<std::process::ExitStatus, GitError> {
     let started = Instant::now();
-    // Most git calls end within a few milliseconds, so the first polls come quickly and the
-    // pause doubles up to 20 ms: a fixed 20 ms pause cost every call about that much (G171).
     let mut pause = std::time::Duration::from_millis(1);
+    // How many of the two pipes are open, as far as `ends` has said.
+    let mut open = 2_u8;
     loop {
         if let Some(status) = child.try_wait().map_err(GitError::Spawn)? {
             return Ok(status);
@@ -1688,8 +1752,41 @@ fn wait_until(
                 secs: timeout.as_secs(),
             });
         }
-        thread::sleep(pause);
+        if open == 0 {
+            thread::sleep(pause);
+        } else {
+            match ends.recv_timeout(pause) {
+                Ok(()) => {
+                    open -= 1;
+                    if open == 0 {
+                        await_exit_briefly(child);
+                    }
+                    // The other pipe closes with this one, and the exit follows both: look
+                    // again before any pause.
+                    pause = std::time::Duration::from_millis(1);
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                // Both readers are gone without a word: only the pause is left.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    open = 0;
+                    continue;
+                }
+            }
+        }
         pause = (pause * 2).min(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Gives `child`, whose output pipes have both just closed, a few hundred microseconds to
+/// exit: a process closes its handles a moment before it is gone, and a sleep, at a millisecond
+/// or more, would outlast that moment many times over.
+fn await_exit_briefly(child: &mut std::process::Child) {
+    let started = Instant::now();
+    while started.elapsed() < std::time::Duration::from_micros(300)
+        && matches!(child.try_wait(), Ok(None))
+    {
+        thread::yield_now();
     }
 }
 
@@ -1702,6 +1799,51 @@ mod tests {
     use crate::result::{GIT_CALL_TIMEOUT, GIT_NETWORK_TIMEOUT};
     use std::process::Command;
     use std::time::{Duration, Instant};
+
+    /// G200: a call that only reads, or writes objects, the index or config, moves no ref, so
+    /// a kept ref read stays good after it. Any other call, and one bay has not listed, may.
+    #[test]
+    fn only_a_call_that_may_move_a_ref_counts_as_a_move() {
+        let moves = |args: &[&str]| {
+            let mut cmd = crate::platform::git();
+            cmd.args(args);
+            super::may_move_refs(&cmd)
+        };
+        for args in [
+            &["rev-parse", "--verify", "-q", "refs/remotes/origin/main"][..],
+            &["-C", "update-ref", "cat-file", "blob", "HEAD:a"],
+            &["--git-dir=x", "for-each-ref", "refs/heads/"],
+            &["config", "bay.main", "main"],
+            &["hash-object", "-w", "--stdin"],
+            &["commit-tree", "abc", "-m", "live"],
+            &["remote", "get-url", "origin"],
+            &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
+            &["symbolic-ref", "--short", "-q", "HEAD"],
+            &["--version"],
+        ] {
+            assert!(!moves(args), "{args:?}");
+        }
+        for args in [
+            &["update-ref", "refs/heads/x", "abc"][..],
+            &["-c", "protocol.version=2", "fetch", "origin"],
+            &["push", "-q", "origin", "a:a"],
+            &["remote", "set-head", "origin", "--auto"],
+            &["remote"],
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/dev",
+            ],
+            &["symbolic-ref", "-d", "refs/remotes/origin/HEAD"],
+            &["branch", "-f", "main", "abc"],
+            &["a-subcommand-bay-has-not-listed"],
+        ] {
+            assert!(moves(args), "{args:?}");
+        }
+        let mut other = Command::new("hostname");
+        other.arg("update-ref");
+        assert!(!super::may_move_refs(&other));
+    }
 
     /// A push to a forge with tens of thousands of refs outlasts the local bound (a fleet's
     /// `bay start`, 2026-10-25): every call that talks to a remote gets the network bound, and

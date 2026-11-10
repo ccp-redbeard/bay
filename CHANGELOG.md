@@ -14,6 +14,9 @@
 - bay's background work on Windows no longer flashes console windows.
 - On Windows, bay starts Git directly rather than through Git for Windows' launcher, so each call starts faster.
 - On Windows, a hook's caller no longer waits for the background work the hook starts.
+- An agent hook reads its repository's trunk once, so the hook before each tool call makes half the Git calls.
+- bay returns from each Git call as the call ends, not some milliseconds later.
+- On Windows, bay finds Git's shell without starting Git to ask for it.
 
 ## 0.6.29
 

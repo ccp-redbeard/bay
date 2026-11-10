@@ -96,13 +96,19 @@ pub fn start(dir: &Path, event: &str, questions: &[String]) {
     };
     let wait = join().min(crate::agent_hook::BUDGET);
     let until = crate::deadline::bounded(wait).map(|wait| Instant::now() + wait);
-    while until.is_some_and(|until| Instant::now() < until) {
-        if !matches!(child.try_wait(), Ok(None)) {
-            return;
+    let mut ended = false;
+    while !ended && until.is_some_and(|until| Instant::now() < until) {
+        ended = !matches!(child.try_wait(), Ok(None));
+        if !ended {
+            std::thread::sleep(STEP);
         }
-        std::thread::sleep(STEP);
     }
-    crate::platform::reap(child);
+    if !ended {
+        crate::platform::reap(child);
+    }
+    // What the poll fetched by now is read from here on, by a hook that keeps its reads of
+    // refs (`crate::repo::keep_one_tip`) too.
+    crate::git::refs_may_have_moved();
 }
 
 /// `bay live poll`: the poll a hook started. `talks` accepts this actor's talks (G54), `fleet`
