@@ -35,7 +35,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::Instant;
@@ -135,6 +135,18 @@ static TOPLEVELS: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new())
 /// its own that may move one ([`may_move_refs`]), and once each time a caller says another
 /// process may have ([`refs_may_have_moved`]). A ref read kept before the latest is read again.
 static REF_MOVES: AtomicU64 = AtomicU64::new(0);
+
+/// G200: whether this process keeps its ref reads ([`keep_ref_reads`]).
+static KEEP_REF_READS: AtomicBool = AtomicBool::new(false);
+
+/// G200: the ref reads kept while [`KEEP_REF_READS`] is set ([`Git::ref_target`],
+/// [`Git::ref_listing`]): by the absolute path of the handle's directory and the call's
+/// arguments. Each has a lock of its own, so threads that ask at once ask Git once.
+static REF_READS: Mutex<BTreeMap<(PathBuf, String), std::sync::Arc<KeptRead>>> =
+    Mutex::new(BTreeMap::new());
+
+/// One kept ref read: the [`REF_MOVES`] it was read at, and Git's answer (`None`: no such ref).
+type KeptRead = Mutex<Option<(u64, Option<String>)>>;
 
 /// G200: the default branch each directory's remote named ([`Git::remote_head`]), by directory
 /// and remote, with the [`REF_MOVES`] it was read at.
@@ -892,17 +904,76 @@ impl Git {
         }
     }
 
-    /// The object a ref points at, or `None` when the ref does not exist.
+    /// The object a ref points at, or `None` when the ref does not exist. Kept for the rest of
+    /// the command when it keeps its ref reads ([`keep_ref_reads`]).
     ///
     /// # Errors
     ///
     /// See [`Git::run`].
     pub fn ref_target(&self, name: &str) -> Result<Option<String>, GitError> {
-        match self.run(&["rev-parse", "--verify", "-q", &format!("{name}^{{object}}")]) {
+        self.ref_target_kept(name, KEEP_REF_READS.load(Ordering::SeqCst))
+    }
+
+    /// [`Git::ref_target`], kept as `keep` says.
+    pub(crate) fn ref_target_kept(
+        &self,
+        name: &str,
+        keep: bool,
+    ) -> Result<Option<String>, GitError> {
+        let spec = format!("{name}^{{object}}");
+        let args = ["rev-parse", "--verify", "-q", spec.as_str()];
+        self.kept(&args, keep, || match self.run(&args) {
             Ok(oid) => Ok(Some(oid)),
             Err(GitError::Failed { .. }) => Ok(None),
             Err(error) => Err(error),
+        })
+    }
+
+    /// `for-each-ref --format=%(objectname) %(refname) <prefix>`: each ref under `prefix` with
+    /// the object it names, one per line. Kept as [`Git::ref_target`] is.
+    ///
+    /// # Errors
+    ///
+    /// See [`Git::run`].
+    pub fn ref_listing(&self, prefix: &str) -> Result<String, GitError> {
+        let args = ["for-each-ref", "--format=%(objectname) %(refname)", prefix];
+        let keep = KEEP_REF_READS.load(Ordering::SeqCst);
+        self.kept(&args, keep, || self.run(&args).map(Some))
+            .map(Option::unwrap_or_default)
+    }
+
+    /// G200: what `read` answers for the ref query `args`. With `keep`, the answer this process
+    /// had for the same query in the same directory, unless a ref may have moved since
+    /// ([`REF_MOVES`]); a query that fails is never kept.
+    fn kept(
+        &self,
+        args: &[&str],
+        keep: bool,
+        read: impl FnOnce() -> Result<Option<String>, GitError>,
+    ) -> Result<Option<String>, GitError> {
+        if !keep {
+            return read();
         }
+        let key = (crate::platform::key_path(&self.dir), args.join("\u{1f}"));
+        let slot = std::sync::Arc::clone(
+            REF_READS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(key)
+                .or_default(),
+        );
+        // Held while Git answers: another thread asking the same waits for this answer.
+        let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+        let moves = ref_moves();
+        if let Some((at, answer)) = slot.as_ref()
+            && *at == moves
+        {
+            return Ok(answer.clone());
+        }
+        let answer = read()?;
+        // Kept at the count read before the call: a move that came meanwhile has it read again.
+        *slot = Some((moves, answer.clone()));
+        Ok(answer)
     }
 
     /// The text of the file at `path` in the tree of `commit`, or `None` when that tree has no
@@ -1296,10 +1367,26 @@ pub fn refs_may_have_moved() {
     REF_MOVES.fetch_add(1, Ordering::SeqCst);
 }
 
+/// G200: from here on this process keeps each ref it reads ([`Git::ref_target`],
+/// [`Git::ref_listing`]) and reads it again only once a ref may have moved: after a `git` call
+/// of its own that may move one ([`may_move_refs`]), or once it says that another process it
+/// waited for may have ([`refs_may_have_moved`]).
+///
+/// For a command that reads what it found and ends, as an agent hook, `bay status` and
+/// `bay start` do: each of their steps read the same refs again (a status read the registry
+/// seven times), and where a process start costs tens of milliseconds that was much of its
+/// run. A ref another process moves meanwhile is read as it was when this one began, as
+/// though it had begun a moment earlier. A command that waits for a ref to move (a runner, a
+/// merge that waits) never calls this, so each of its reads sees the ref as it is then.
+pub fn keep_ref_reads() {
+    KEEP_REF_READS.store(true, Ordering::SeqCst);
+}
+
 /// G200: whether `cmd` is a `git` call that may move a ref. Every call may, but the ones known
 /// to read only, or to write nothing but objects, the index or config: those are named here,
-/// so a subcommand bay starts to use counts as a move until it is listed. `remote get-url` and
-/// a `symbolic-ref` of one name read; any other form of either may move a ref.
+/// so a subcommand bay starts to use counts as a move until it is listed. `remote get-url`, a
+/// `fetch --dry-run` and a `symbolic-ref` of one name read; any other form of each may move a
+/// ref.
 fn may_move_refs(cmd: &Command) -> bool {
     if !crate::platform::is_git(cmd.get_program()) {
         return false;
@@ -1316,6 +1403,8 @@ fn may_move_refs(cmd: &Command) -> bool {
         | "patch-id" | "read-tree" | "rev-list" | "rev-parse" | "show" | "show-ref" | "status"
         | "update-index" | "write-tree" => false,
         "remote" => rest.first().is_none_or(|first| first != "get-url"),
+        // A dry run asks the remote what a fetch would move, and moves nothing.
+        "fetch" => !rest.iter().any(|arg| arg == "--dry-run"),
         "symbolic-ref" => {
             let delete = rest.iter().any(|arg| arg == "-d" || arg == "--delete");
             // `-m <reason>` comes only with a write; every other option stands alone.
@@ -1819,6 +1908,13 @@ mod tests {
             &["remote", "get-url", "origin"],
             &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
             &["symbolic-ref", "--short", "-q", "HEAD"],
+            &[
+                "fetch",
+                "--dry-run",
+                "--porcelain",
+                "origin",
+                "+refs/heads/main:x",
+            ],
             &["--version"],
         ] {
             assert!(!moves(args), "{args:?}");

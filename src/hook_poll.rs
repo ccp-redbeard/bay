@@ -107,7 +107,7 @@ pub fn start(dir: &Path, event: &str, questions: &[String]) {
         crate::platform::reap(child);
     }
     // What the poll fetched by now is read from here on, by a hook that keeps its reads of
-    // refs (`crate::repo::keep_one_tip`) too.
+    // refs (`crate::git::keep_ref_reads`) too.
     crate::git::refs_may_have_moved();
 }
 

@@ -11,11 +11,9 @@
 //! (remote `origin` unless `bay.remote` names another). A missing bootstrap, or no config at
 //! the trunk tip, is `CONFIG_MISSING`, never a silent default.
 
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use serde_json::{Value, json};
 
@@ -115,60 +113,6 @@ fn refresh_default(git: &Git, bootstrap: &Bootstrap) -> bool {
     // `set-head` has the default read again.
     git.remote_head(&bootstrap.remote)
         .is_ok_and(|after| after != bootstrap.tracking_ref())
-}
-
-/// G200: whether this process keeps its first read of each trunk tip ([`keep_one_tip`]).
-static ONE_TIP: AtomicBool = AtomicBool::new(false);
-
-/// G200: the trunk tips read while [`ONE_TIP`] is set, by common directory and tracking ref,
-/// each with the count of ref moves it was read at (`crate::git::ref_moves`).
-static TIPS: Mutex<BTreeMap<(PathBuf, String), (u64, String)>> = Mutex::new(BTreeMap::new());
-
-/// G200: from here on this process reads the tip of each repository's trunk once, however many
-/// times it opens the repository, and again only once a ref may have moved: after a `git` call
-/// of its own that may move one, or when it says so itself after it waited for another process
-/// (`crate::git::refs_may_have_moved`).
-///
-/// For a process that ends within moments and opens its repository at each step, as an agent
-/// hook does: a tool hook read the tip six times, and where a process start costs tens of
-/// milliseconds that was half its run. Each open still reads what that tip holds. A process
-/// that waits for the trunk to move (a runner, a merge that waits, a status that waits for its
-/// sweep) never calls this, so each of its opens reads the tip as it is then.
-pub fn keep_one_tip() {
-    ONE_TIP.store(true, Ordering::SeqCst);
-}
-
-/// The commit `tracking` names in the repository of `common_dir`, `None` when it names none.
-/// With `keep`, the tip this process read before, unless a ref may have moved since
-/// ([`keep_one_tip`]); a ref that names no commit is never kept.
-fn trunk_tip(
-    git: &Git,
-    common_dir: &Path,
-    tracking: &str,
-    keep: bool,
-) -> Result<Option<String>, GitError> {
-    let name = format!("{tracking}^{{commit}}");
-    if !keep {
-        return git.ref_target(&name);
-    }
-    let key = (common_dir.to_path_buf(), tracking.to_owned());
-    let moves = crate::git::ref_moves();
-    if let Some((at, tip)) = TIPS
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&key)
-        && *at == moves
-    {
-        return Ok(Some(tip.clone()));
-    }
-    let tip = git.ref_target(&name)?;
-    if let Some(tip) = &tip {
-        // Kept at the count read before the call: a move that came meanwhile has it read again.
-        TIPS.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(key, (moves, tip.clone()));
-    }
-    Ok(tip)
 }
 
 /// A key of the repository-local git config (`$GIT_COMMON_DIR/config`); `None` when unset.
@@ -435,9 +379,9 @@ impl Repo {
             Err(BootstrapError::Unreadable(message)) => return Err(known(message)),
         };
         let tracking = bootstrap.tracking_ref();
-        let keep = ONE_TIP.load(Ordering::SeqCst);
         let tip_of = |git: &Git| {
-            trunk_tip(git, &common_dir, &tracking, keep).map_err(|error| error.message())
+            git.ref_target(&format!("{tracking}^{{commit}}"))
+                .map_err(|error| error.message())
         };
         let mut prefetched = None;
         let mut fetch_error = None;
@@ -1179,12 +1123,12 @@ mod tests {
         assert_eq!(trunk(), "dev", "a remote call left the old default");
     }
 
-    /// G200: a process that keeps its read of the trunk's tip ([`super::keep_one_tip`]) reads
-    /// it again after a call of its own that may move a ref, and a process that keeps none
-    /// reads it at every open. (That a kept tip outlasts a move by another process is not
-    /// asserted here, for the reason above; G200's hook test counts the reads.)
+    /// G200: a command that keeps its ref reads (`crate::git::keep_ref_reads`) reads a ref again
+    /// after a call of its own that may move a ref, and a command that keeps none reads it at
+    /// every call. (That a kept read outlasts a move by another process is not asserted here,
+    /// for the reason above; G200's command tests count the reads.)
     #[test]
-    fn a_kept_trunk_tip_is_read_again_after_bay_moves_a_ref() {
+    fn a_kept_ref_read_is_read_again_after_bay_moves_a_ref() {
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path().join("repo");
         std::fs::create_dir_all(&root).unwrap();
@@ -1194,13 +1138,12 @@ mod tests {
         git(&root, &["commit", "-q", "--allow-empty", "-m", "two"]);
         let two = git(&root, &["rev-parse", "HEAD"]);
         let tracking = "refs/remotes/origin/main";
-        let common_dir = root.join(".git");
-        let common = crate::git::Git::new(&common_dir);
-        let tip = |keep| super::trunk_tip(&common, &common_dir, tracking, keep).unwrap();
-        // No such ref yet: nothing is kept, so the ref is found once it is there.
+        let common = crate::git::Git::new(root.join(".git"));
+        let tip = |keep| common.ref_target_kept(tracking, keep).unwrap();
+        // No such ref yet: kept as none until bay moves a ref.
         assert_eq!(tip(true), None);
-        git(&root, &["update-ref", tracking, &one]);
-        assert_eq!(tip(true), Some(one.clone()));
+        common.run(&["update-ref", tracking, &one]).unwrap();
+        assert_eq!(tip(true), Some(one.clone()), "bay's own write left no ref");
         // Moved by bay itself: read again.
         common.run(&["update-ref", tracking, &two]).unwrap();
         assert_eq!(
@@ -1208,7 +1151,7 @@ mod tests {
             Some(two.clone()),
             "bay's own write left the old tip"
         );
-        // A process that keeps no tip reads one moved by any process.
+        // A command that keeps no reads sees a ref moved by any process.
         git(&root, &["update-ref", tracking, &one]);
         assert_eq!(tip(false), Some(one));
     }

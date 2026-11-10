@@ -87,6 +87,8 @@ pub fn start(dir: &Path, change: Option<&str>, until: Option<Instant>) -> Answer
             .ok(),
         None => answer.recv().ok(),
     };
+    // G200: what the sweep fetched is read from here on, by a command that keeps its reads too.
+    crate::git::refs_may_have_moved();
     line.map_or(Answer::Late(pid), |line| parse(&line))
 }
 
@@ -140,16 +142,21 @@ const NO_DEADLINE_WAIT: Duration = Duration::from_secs(300);
 pub fn wait_ended(common: &Path, running: &Value, until: Option<Instant>) -> bool {
     let until = until.unwrap_or_else(|| Instant::now() + NO_DEADLINE_WAIT);
     let mut since = running["since"].as_u64();
+    // G200: what that sweep fetched is read from here on, by a command that keeps its reads too.
+    let ended = |done: bool| {
+        crate::git::refs_may_have_moved();
+        done
+    };
     loop {
         let now = crate::sweep::running(common);
         match (since, now["since"].as_u64()) {
-            (Some(waited), Some(seen)) if seen != waited => return true,
-            (Some(_), Some(_)) if now["ended"].is_u64() => return true,
+            (Some(waited), Some(seen)) if seen != waited => return ended(true),
+            (Some(_), Some(_)) if now["ended"].is_u64() => return ended(true),
             (None, Some(seen)) => since = Some(seen),
             _ => {}
         }
         if Instant::now() >= until {
-            return false;
+            return ended(false);
         }
         std::thread::sleep(Duration::from_millis(50));
     }

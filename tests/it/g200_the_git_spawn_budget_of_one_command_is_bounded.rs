@@ -4,7 +4,8 @@
 //! command lists its repository's config once per handle it opens, never one `git config`
 //! per key, so its `config` spawns stay within a handful however many keys it reads. It reads
 //! the remote's default branch once, however many times it opens its repository, and an agent
-//! hook also asks once where its repository is and reads its trunk's tip once.
+//! hook also asks once where its repository is and reads its trunk's tip once. An agent hook,
+//! a status and a start read each ref once between the calls of their own that may move one.
 
 use crate::support;
 
@@ -286,7 +287,7 @@ fn a_hook_reads_the_remotes_default_branch_once() {
 /// hook runs before every tool call, so half its run was reads it had just made. A hook reads
 /// the tip once and asks once.
 ///
-/// Guards to mutate: `src/main.rs` `Command::Hook`: never call `keep_one_tip`; `src/git.rs`
+/// Guards to mutate: `src/main.rs` `keeps_ref_reads`: false for a hook; `src/git.rs`
 /// `Git::common_dir`: key by the path as given.
 #[test]
 fn a_tool_hook_reads_its_trunk_once_and_asks_once_where_its_repository_is() {
@@ -307,4 +308,132 @@ fn a_tool_hook_reads_its_trunk_once_and_asks_once_where_its_repository_is() {
         "the hook asked {} times where its repository is: {asked:#?}",
         asked.len()
     );
+}
+
+/// The calls of bay's own process, in the order they started, from the trace `cmd` writes.
+fn traced(test_box: &TestBox, name: &str, cmd: &mut Command) -> (Vec<Value>, Value) {
+    let trace = test_box.path().join(format!("{name}-trace.jsonl"));
+    let (code, result) = result_json(cmd.env("BAY_TEST_GIT_TRACE", &trace));
+    assert_eq!(code, 0, "{result}");
+    let lines: Vec<Value> = std::fs::read_to_string(&trace)
+        .expect("the trace was written")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let pid = lines.first().map(|line| line["pid"].clone());
+    let start = |line: &Value| line["end"].as_u64().unwrap() - line["us"].as_u64().unwrap();
+    let mut own: Vec<Value> = lines
+        .into_iter()
+        .filter(|line| Some(&line["pid"]) == pid.as_ref())
+        .collect();
+    own.sort_by_key(start);
+    (own, result)
+}
+
+/// The ref reads among `calls` that read again what was read with no call between that may
+/// move a ref: the one form of each read a command keeps (`rev-parse --verify -q <ref>^{object}`
+/// and the `for-each-ref` listing of each ref's object). A call that only reads, or writes
+/// objects, the index or config, moves no ref; any other may.
+fn rereads(calls: &[Value]) -> Vec<String> {
+    const READS: &[&str] = &[
+        "--version",
+        "cat-file",
+        "check-attr",
+        "cherry",
+        "commit-tree",
+        "config",
+        "diff",
+        "diff-tree",
+        "for-each-ref",
+        "hash-object",
+        "log",
+        "ls-files",
+        "ls-remote",
+        "ls-tree",
+        "merge-base",
+        "merge-tree",
+        "mktree",
+        "patch-id",
+        "read-tree",
+        "rev-list",
+        "rev-parse",
+        "show",
+        "show-ref",
+        "status",
+        "update-index",
+        "write-tree",
+    ];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut again = Vec::new();
+    for call in calls {
+        let args: Vec<&str> = call["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        let sub = call["sub"].as_str().unwrap_or_default();
+        let reads = READS.contains(&sub)
+            || (sub == "remote" && args.contains(&"get-url"))
+            || (sub == "fetch" && args.contains(&"--dry-run"))
+            || (sub == "symbolic-ref" && args.iter().filter(|a| !a.starts_with('-')).count() <= 3);
+        if !reads {
+            seen.clear();
+            continue;
+        }
+        let kept = (sub == "rev-parse"
+            && args.windows(3).any(|w| w == ["--verify", "-q", w[2]])
+            && args.last().is_some_and(|last| last.ends_with("^{object}")))
+            || (sub == "for-each-ref" && args.contains(&"--format=%(objectname) %(refname)"));
+        if kept && !seen.insert(args.join(" ")) {
+            again.push(args.join(" "));
+        }
+    }
+    again
+}
+
+/// A Windows trace: a second `bay status`, served by the sweep the first one made, read the key
+/// registry six times and listed the change chains four times; a status in a view read the
+/// registry eight times. Nothing it does between moves a ref. It reads each ref once.
+///
+/// Guard to mutate: `src/main.rs` `keeps_ref_reads`: false for a status.
+#[test]
+fn a_status_reads_each_ref_once_between_moves() {
+    let test_box = TestBox::new();
+    let repo = seeded(&test_box);
+    // The second read is served by the first one's sweep, however slow the machine.
+    let status = || {
+        let mut cmd = test_box.bay(&repo);
+        cmd.arg("status").env("BAY_TEST_SWEPT_S", "600");
+        cmd
+    };
+    let (code, first) = result_json(&mut status());
+    assert_eq!(code, 0, "{first}");
+    let (calls, _) = traced(&test_box, "status", &mut status());
+    assert!(
+        calls.iter().all(|call| call["sub"] != "fetch"),
+        "the second status fetched; the first one's sweep should serve it: {calls:#?}"
+    );
+    let again = rereads(&calls);
+    assert!(again.is_empty(), "the status read again: {again:#?}");
+}
+
+/// The same trace: `bay start` read the trunk's tip four times and the registry twice. Between
+/// its fetches and its writes, it reads each ref once.
+///
+/// Guard to mutate: `src/main.rs` `keeps_ref_reads`: false for a start.
+#[test]
+fn a_start_reads_each_ref_once_between_moves() {
+    let test_box = TestBox::new();
+    let repo = seeded(&test_box);
+    let (calls, result) = traced(
+        &test_box,
+        "start",
+        test_box
+            .bay(&repo)
+            .args(["start", "CARD-1", "--paths", "src/"]),
+    );
+    assert!(result["detail"]["view"].is_string(), "{result}");
+    let again = rereads(&calls);
+    assert!(again.is_empty(), "the start read again: {again:#?}");
 }

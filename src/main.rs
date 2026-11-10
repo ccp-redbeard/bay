@@ -900,9 +900,33 @@ fn start_change(dir: &std::path::Path, command: Command) -> BayResult {
     )
 }
 
+/// G200: whether `command` keeps each ref it reads (`bay::git::keep_ref_reads`): a command that
+/// reads what it finds and ends. An agent hook with a budget ends within moments; the two
+/// moments that wait for the remote do not. `bay status` of changes waits only for its sweep,
+/// which says when it moved refs; `bay start` fetches again before each read it waits on.
+/// Everything else, a runner, a merge that waits and a watch among them, reads each ref anew.
+fn keeps_ref_reads(command: &Command) -> bool {
+    match command {
+        Command::Hook { event } => bay::agent_hook::budget(event).is_some(),
+        Command::Status {
+            all,
+            lineage,
+            branches,
+            since,
+            ..
+        } => !all && lineage.is_none() && !branches && since.is_none(),
+        Command::Start { .. } => true,
+        _ => false,
+    }
+}
+
 fn main() -> ExitCode {
     bay::platform::keep_std_handles();
     let cli = parse();
+    // Before the first read, which the config check below makes.
+    if keeps_ref_reads(&cli.command) {
+        bay::git::keep_ref_reads();
+    }
     if let Some(refusal) = config_refusal(&cli) {
         return render(&refusal, cli.json);
     }
@@ -990,9 +1014,6 @@ fn main() -> ExitCode {
             // what it says.
             if let Some(budget) = bay::agent_hook::budget(&event) {
                 bay::deadline::set(std::time::Instant::now() + budget);
-                // G200: a hook with a budget ends within moments, so it reads its trunk's tip
-                // once. The two moments that wait for the remote read it at each open.
-                bay::repo::keep_one_tip();
             }
             // The agent hook follows the agent product's exit protocol (INTERFACES § 1): for
             // Claude Code, exit 2 denies. The payload adapter decides (agent_hook.rs).

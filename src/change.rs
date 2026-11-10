@@ -856,11 +856,7 @@ impl<'a> Chain<'a> {
         // G624: the listing names each head only; its committer time comes from its commit in
         // the batch below, once per head. `%(committerdate)` parsed every head's commit on every
         // listing (3,490 chains, about six listings per `bay status`, 2026-11-01).
-        let listed = self.git.run(&[
-            "for-each-ref",
-            "--format=%(objectname) %(refname)",
-            CHANGES_PREFIX,
-        ])?;
+        let listed = self.git.ref_listing(CHANGES_PREFIX)?;
         let heads: Vec<(String, String)> = listed
             .lines()
             .filter_map(|line| {
