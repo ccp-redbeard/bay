@@ -64,6 +64,10 @@ jobs:
     env:
       SHARDS: 8
       SHARD: ${{ matrix.shard }}
+      # A hosted runner's TEMP is an 8.3 short path (RUNNER~1); the tests compare the paths
+      # they make with the long ones Git and bay report, so they work under the runner's own.
+      TEMP: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
         with:

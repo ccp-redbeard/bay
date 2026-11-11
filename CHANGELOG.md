@@ -18,6 +18,7 @@
 - `bay status` and `bay start` read each ref once, so a repeat status makes a third fewer Git calls.
 - bay returns from each Git call as the call ends, not some milliseconds later.
 - On Windows, bay finds Git's shell without starting Git to ask for it.
+- On Windows, checks find Git under Git for Windows 2.56, which keeps it in `ucrt64`.
 
 ## 0.6.29
 

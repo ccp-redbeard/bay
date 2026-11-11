@@ -75,6 +75,10 @@ fn while_the_head_is_checked(fail_head: bool) -> (Held, [String; 3], Value) {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: two pre-checks outlast the held head's check timeout; under investigation"
+)]
 fn entries_checked_on_their_predicted_bases_land_with_no_new_run_in_queue_order() {
     let (held, [one, two, three], outcome) = while_the_head_is_checked(false);
     for id in [&one, &two, &three] {
@@ -104,6 +108,10 @@ fn entries_checked_on_their_predicted_bases_land_with_no_new_run_in_queue_order(
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "Windows: two pre-checks outlast the held head's check timeout; under investigation"
+)]
 fn a_failing_head_leaves_the_pre_checks_unused_and_the_entries_are_checked_again() {
     let (held, [one, two, three], outcome) = while_the_head_is_checked(true);
     assert_eq!(

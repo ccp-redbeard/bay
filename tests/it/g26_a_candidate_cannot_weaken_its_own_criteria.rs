@@ -519,12 +519,28 @@ fn a_policy_removed_and_added_again_outside_bay_is_no_bootstrap() {
 }
 
 /// The `PATH` a check sees under `path = ["/usr/bin", "/bin"]`, the stated default. On Windows,
-/// where Git's `usr/bin` holds no `git.exe`, bay puts Git's `/mingw64/bin` just before it.
-const DEFAULT_PATH: &str = if cfg!(windows) {
-    "/mingw64/bin:/usr/bin:/bin"
-} else {
-    "/usr/bin:/bin"
-};
+/// where Git's `usr/bin` holds no `git.exe`, bay puts the `bin` that holds it just before it:
+/// the folder above `git --exec-path`'s `libexec` (`/ucrt64/bin` from Git 2.56, `/mingw64/bin`
+/// before it).
+fn default_path() -> String {
+    if !cfg!(windows) {
+        return "/usr/bin:/bin".to_owned();
+    }
+    let out = std::process::Command::new("git")
+        .arg("--exec-path")
+        .output()
+        .unwrap();
+    let exec_path = String::from_utf8(out.stdout).unwrap();
+    let build = std::path::Path::new(exec_path.trim())
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::file_name)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    format!("/{build}/bin:/usr/bin:/bin")
+}
 
 /// Lands a change under a check whose policy entry ends with `fields` and whose adapter
 /// first runs `before`; the executor's environment adds `env`.
@@ -561,11 +577,12 @@ fn land_with_environment(
 #[test]
 fn a_check_sees_only_the_fixed_baseline_and_its_declared_variables() {
     let home = std::env::var("HOME").unwrap_or_default();
+    let default_path = default_path();
     // Each failed condition exits without a result, so the check is unknown, never a pass.
     let before = format!(
         "[ -z \"$UNDECLARED_VAR\" ] || {{ echo inherited UNDECLARED_VAR >&2; exit 3; }}\n\
          [ \"$DECLARED_VAR\" = declared ] || {{ echo no DECLARED_VAR >&2; exit 3; }}\n\
-         [ \"$PATH\" = {DEFAULT_PATH} ] || {{ echo PATH is $PATH >&2; exit 3; }}\n\
+         [ \"$PATH\" = {default_path} ] || {{ echo PATH is $PATH >&2; exit 3; }}\n\
          [ \"$LANG\" = C.UTF-8 ] || {{ echo LANG is $LANG >&2; exit 3; }}\n\
          [ -n \"$HOME\" ] && [ \"$HOME\" != '{home}' ] && touch \"$HOME/written\" || {{ echo HOME is $HOME >&2; exit 3; }}\n\
          [ -n \"$TMPDIR\" ] && touch \"$TMPDIR/written\" || {{ echo TMPDIR is $TMPDIR >&2; exit 3; }}"
@@ -600,9 +617,10 @@ fn a_relative_path_entry_makes_the_policy_invalid() {
 fn a_check_without_path_runs_under_the_stated_default_path() {
     // An absent `path` takes its stated default, so no shell falls back to a search path the
     // policy does not name.
+    let default_path = default_path();
     let (code, result) = land_with_environment(
         "",
-        &format!("[ \"$PATH\" = {DEFAULT_PATH} ] || {{ echo PATH is $PATH >&2; exit 3; }}"),
+        &format!("[ \"$PATH\" = {default_path} ] || {{ echo PATH is $PATH >&2; exit 3; }}"),
         &[],
     );
     assert_eq!(code, 0, "{result}");

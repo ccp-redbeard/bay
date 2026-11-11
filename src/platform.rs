@@ -104,6 +104,8 @@ struct GitDirect {
     program: PathBuf,
     /// `<root>\<arch>\bin;<root>\usr\bin;<home>\bin;`, as the launcher puts it.
     path_prefix: OsString,
+    /// The `<arch>` folder that holds it, from [`GIT_BUILDS`].
+    arch: &'static str,
     msystem: &'static str,
 }
 
@@ -139,13 +141,7 @@ fn git_behind_launcher(launcher: &Path, home: Option<&OsStr>) -> Option<GitDirec
         return None;
     }
     let root = cmd_dir.parent()?;
-    [
-        ("mingw64", "MINGW64"),
-        ("clangarm64", "CLANGARM64"),
-        ("mingw32", "MINGW32"),
-    ]
-    .into_iter()
-    .find_map(|(arch, msystem)| {
+    GIT_BUILDS.into_iter().find_map(|(arch, msystem)| {
         let bin = root.join(arch).join("bin");
         let program = bin.join("git.exe");
         if !program.is_file() {
@@ -161,10 +157,20 @@ fn git_behind_launcher(launcher: &Path, home: Option<&OsStr>) -> Option<GitDirec
         Some(GitDirect {
             program,
             path_prefix,
+            arch,
             msystem,
         })
     })
 }
+
+/// Git for Windows' builds: the folder under its root whose `bin` holds `git.exe`, and the
+/// `MSYSTEM` its launcher sets. Git 2.56 moved the x64 build from `mingw64` to `ucrt64`.
+const GIT_BUILDS: [(&str, &str); 4] = [
+    ("ucrt64", "UCRT64"),
+    ("mingw64", "MINGW64"),
+    ("clangarm64", "CLANGARM64"),
+    ("mingw32", "MINGW32"),
+];
 
 /// The Windows lookup of `name` on `path` with the extensions of `pathext` (`;`-separated,
 /// `.COM;.EXE;.BAT;.CMD` when unset): in each directory of `path` in order, the name as given
@@ -254,26 +260,35 @@ pub fn reap(mut child: Child) {
 /// directory holds a `:` after its drive letter, `:` elsewhere.
 ///
 /// On Windows a script runs under Git for Windows' `sh.exe`, whose `/usr/bin` holds the POSIX
-/// tools but not `git.exe`; Git keeps that in `/mingw64/bin`, and its own `sh` launcher puts
-/// that first. So `/usr/bin` there brings `/mingw64/bin` just before it, and a policy's system
-/// directories hold Git as they do on Unix.
+/// tools but not `git.exe`; Git keeps that in its build's `bin` ([`git_bin`]), and its own
+/// `sh` launcher puts that first. So `/usr/bin` there brings Git's `bin` just before it, and a
+/// policy's system directories hold Git as they do on Unix.
 #[must_use]
 pub fn search_path(dirs: &[String]) -> String {
     if !cfg!(windows) {
         return dirs.join(":");
     }
+    search_path_with(dirs, &git_bin())
+}
+
+/// [`search_path`] on Windows, where Git keeps `git.exe` in `git_bin`.
+fn search_path_with(dirs: &[String], git_bin: &str) -> String {
     let mut out: Vec<&str> = Vec::with_capacity(dirs.len() + 1);
     for dir in dirs {
-        if dir == "/usr/bin" && !dirs.iter().any(|named| named == MINGW_BIN) {
-            out.push(MINGW_BIN);
+        if dir == "/usr/bin" && !dirs.iter().any(|named| named == git_bin) {
+            out.push(git_bin);
         }
         out.push(dir);
     }
     out.join(";")
 }
 
-/// Where Git for Windows keeps `git.exe`, as its `sh.exe` names the folder.
-const MINGW_BIN: &str = "/mingw64/bin";
+/// Where Git for Windows keeps `git.exe`, as its `sh.exe` names the folder: the `bin` of the
+/// build bay starts git from (`/ucrt64/bin` from Git 2.56), else `/mingw64/bin`.
+fn git_bin() -> String {
+    let arch = git_direct().map_or("mingw64", |direct| direct.arch);
+    format!("/{arch}/bin")
+}
 
 /// How an adapter's program starts, read from its first line (plan W6).
 #[derive(Debug, PartialEq, Eq)]
@@ -541,6 +556,21 @@ mod tests {
         assert!(git_behind_launcher(&other, None).is_none());
     }
 
+    /// Git 2.56 keeps its x64 git in `ucrt64`, where Git before it used `mingw64`.
+    #[test]
+    fn the_git_of_a_ucrt64_build_is_found_behind_its_launcher() {
+        let root = tempfile::tempdir().unwrap();
+        let launcher = root.path().join("cmd").join("git.exe");
+        let git = root.path().join("ucrt64").join("bin").join("git.exe");
+        for path in [&launcher, &git] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        let direct = git_behind_launcher(&launcher, None).unwrap();
+        assert_eq!(direct.program, git);
+        assert_eq!((direct.arch, direct.msystem), ("ucrt64", "UCRT64"));
+    }
+
     /// The shell is found beside the git bay starts, as `git --exec-path` would lead to it.
     #[test]
     fn the_exec_path_beside_a_direct_git_leads_to_its_shell() {
@@ -724,23 +754,35 @@ mod tests {
         let dirs = ["/usr/bin".to_owned(), "/bin".to_owned()];
         let joined = super::search_path(&dirs);
         let split: Vec<_> = std::env::split_paths(&joined).collect();
-        let want: &[&str] = if cfg!(windows) {
-            &["/mingw64/bin", "/usr/bin", "/bin"]
+        let git_bin = super::git_bin();
+        let want: Vec<&str> = if cfg!(windows) {
+            vec![&git_bin, "/usr/bin", "/bin"]
         } else {
-            &["/usr/bin", "/bin"]
+            vec!["/usr/bin", "/bin"]
         };
         let want: Vec<_> = want.iter().map(std::path::Path::new).collect();
         assert_eq!(split, want);
-        // A policy that names Git's folder itself keeps it where it put it, once.
-        let named = ["/usr/bin".to_owned(), "/mingw64/bin".to_owned()];
-        assert_eq!(
-            super::search_path(&named),
-            if cfg!(windows) {
-                "/usr/bin;/mingw64/bin"
-            } else {
-                "/usr/bin:/mingw64/bin"
-            }
-        );
+        if !cfg!(windows) {
+            assert_eq!(super::search_path(&dirs), "/usr/bin:/bin");
+        }
+    }
+
+    /// `/usr/bin` brings the `bin` of whichever build holds Git's `git.exe`, and a policy that
+    /// names that folder itself keeps it where it put it, once.
+    #[test]
+    fn usr_bin_brings_the_bin_that_holds_git() {
+        let dirs = ["/usr/bin".to_owned(), "/bin".to_owned()];
+        for git_bin in ["/ucrt64/bin", "/mingw64/bin"] {
+            assert_eq!(
+                super::search_path_with(&dirs, git_bin),
+                format!("{git_bin};/usr/bin;/bin")
+            );
+            let named = ["/usr/bin".to_owned(), git_bin.to_owned()];
+            assert_eq!(
+                super::search_path_with(&named, git_bin),
+                format!("/usr/bin;{git_bin}")
+            );
+        }
     }
 
     /// On Windows a `#!/bin/sh` adapter starts through `sh.exe` from Git for Windows.
