@@ -80,6 +80,13 @@ jobs:
           "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
           "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
 
+      # A check's observed reads are seen through access times (G374, G375). Windows Server
+      # ships with last-access updates off; turn them on for a hosted runner, which is thrown
+      # away after the job. A machine of your own keeps its own setting.
+      - name: Last-access updates on
+        if: runner.environment == 'github-hosted'
+        run: fsutil behavior set disablelastaccess 0
+
       # The integration tests start their fake `#!/bin/sh` programs through this shim.
       - name: Test shim
         run: cargo build --example sh_shim
