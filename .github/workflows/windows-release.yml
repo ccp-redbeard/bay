@@ -1,5 +1,8 @@
 # Builds and tests bay on Windows for a release of this fork, then attaches the binary.
 # Upstream bay has no hosted CI (AGENTS.md); this file belongs to the fork only.
+#
+# The Windows jobs run on the runner the repository variable WINDOWS_RUNNER names (a label, or
+# a JSON list of labels), else on windows-latest. Nothing here runs for a pull request.
 name: windows-release
 
 on:
@@ -16,17 +19,17 @@ permissions:
 
 env:
   TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  REF: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  CARGO_TERM_COLOR: always
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 180
-    env:
-      CARGO_TERM_COLOR: always
+  check:
+    runs-on: ${{ startsWith(vars.WINDOWS_RUNNER, '[') && fromJSON(vars.WINDOWS_RUNNER) || vars.WINDOWS_RUNNER || 'windows-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+          ref: ${{ env.REF }}
 
       - name: Toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
@@ -49,15 +52,55 @@ jobs:
           cargo test --lib --bins
           cargo test --doc
 
+  # The integration suite takes hours on one Windows machine, so it runs in shards: each takes
+  # every SHARDS-th test file, in name order.
+  integration:
+    runs-on: ${{ startsWith(vars.WINDOWS_RUNNER, '[') && fromJSON(vars.WINDOWS_RUNNER) || vars.WINDOWS_RUNNER || 'windows-latest' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    env:
+      SHARDS: 8
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
+
       # The integration tests start their fake `#!/bin/sh` programs through this shim.
       - name: Test shim
         run: cargo build --example sh_shim
 
-      - name: Integration tests
-        run: cargo test --test it -- --test-threads 4
+      - name: Integration tests, shard ${{ matrix.shard }} of 8
+        shell: pwsh
+        run: |
+          $listed = cargo test --test it -- --list --format terse
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $files = $listed | Where-Object { $_ -match ': test$' } |
+            ForEach-Object { ($_ -replace ': test$', '').Split('::')[0] } | Sort-Object -Unique
+          $mine = @(for ($i = [int]$env:SHARD; $i -lt $files.Count; $i += [int]$env:SHARDS) { "$($files[$i])::" })
+          "shard $env:SHARD runs $($mine.Count) of $($files.Count) test files"
+          cargo test --test it -- --test-threads 4 @mine
+
+  build:
+    needs: [check, integration]
+    runs-on: ${{ startsWith(vars.WINDOWS_RUNNER, '[') && fromJSON(vars.WINDOWS_RUNNER) || vars.WINDOWS_RUNNER || 'windows-latest' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup show active-toolchain || rustup toolchain install
 
       - name: Release build
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Package
         shell: bash
@@ -73,7 +116,7 @@ jobs:
 
   # Only this job may write, and it runs no code from the repository.
   attach:
-    needs: windows
+    needs: build
     if: github.event.release.tag_name != '' || inputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
