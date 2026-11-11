@@ -128,8 +128,9 @@ fn git_direct() -> Option<&'static GitDirect> {
         .as_ref()
 }
 
-/// The git that `launcher` starts, when `launcher` is Git for Windows' `<root>\cmd\git.exe`
-/// and that git is installed beside it.
+/// The git that `launcher` starts, when `launcher` is one of Git for Windows' launchers,
+/// `<root>\cmd\git.exe` or `<root>\bin\git.exe` (which a `PATH` may name first), and that git
+/// is installed beside it.
 fn git_behind_launcher(launcher: &Path, home: Option<&OsStr>) -> Option<GitDirect> {
     let named = |path: &Path, name: &str| {
         path.file_name()
@@ -137,7 +138,7 @@ fn git_behind_launcher(launcher: &Path, home: Option<&OsStr>) -> Option<GitDirec
             .is_some_and(|file| file.eq_ignore_ascii_case(name))
     };
     let cmd_dir = launcher.parent()?;
-    if !named(launcher, "git.exe") || !named(cmd_dir, "cmd") {
+    if !named(launcher, "git.exe") || !(named(cmd_dir, "cmd") || named(cmd_dir, "bin")) {
         return None;
     }
     let root = cmd_dir.parent()?;
@@ -284,10 +285,25 @@ fn search_path_with(dirs: &[String], git_bin: &str) -> String {
 }
 
 /// Where Git for Windows keeps `git.exe`, as its `sh.exe` names the folder: the `bin` of the
-/// build bay starts git from (`/ucrt64/bin` from Git 2.56), else `/mingw64/bin`.
+/// build bay starts git from (`/ucrt64/bin` from Git 2.56), else of the build installed with
+/// the `sh.exe` bay runs scripts through, else `/mingw64/bin`.
 fn git_bin() -> String {
-    let arch = git_direct().map_or("mingw64", |direct| direct.arch);
+    let arch = git_direct()
+        .map(|direct| direct.arch)
+        .or_else(|| build_above(&git_sh()?))
+        .unwrap_or("mingw64");
     format!("/{arch}/bin")
+}
+
+/// The build ([`GIT_BUILDS`]) whose `bin\git.exe` is installed in a folder above `path`, such
+/// as Git's `usr\bin\sh.exe`: the nearest such folder, at most three up.
+fn build_above(path: &Path) -> Option<&'static str> {
+    path.ancestors().skip(1).take(3).find_map(|root| {
+        GIT_BUILDS
+            .iter()
+            .find(|(arch, _)| root.join(arch).join("bin").join("git.exe").is_file())
+            .map(|(arch, _)| *arch)
+    })
 }
 
 /// How an adapter's program starts, read from its first line (plan W6).
@@ -551,9 +567,31 @@ mod tests {
                 home.display()
             ))
         );
+        // `<root>\bin\git.exe` is a launcher too, which a PATH may name before `cmd`.
+        let bin_launcher = file(root.path().join("bin").join("git.exe"));
+        let direct = git_behind_launcher(&bin_launcher, None).unwrap();
+        assert_eq!(direct.program, git);
         // A git.exe in any other directory is not a launcher.
-        let other = file(root.path().join("bin").join("git.exe"));
+        let other = file(root.path().join("tools").join("git.exe"));
         assert!(git_behind_launcher(&other, None).is_none());
+    }
+
+    /// Git's shell leads to the build installed with it.
+    #[test]
+    fn the_build_is_found_above_git_s_shell() {
+        let root = tempfile::tempdir().unwrap();
+        let sh = root.path().join("usr").join("bin").join("sh.exe");
+        let git = root.path().join("ucrt64").join("bin").join("git.exe");
+        assert_eq!(super::build_above(&sh), None);
+        for path in [&sh, &git] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        assert_eq!(super::build_above(&sh), Some("ucrt64"));
+        assert_eq!(
+            super::build_above(&root.path().join("bin").join("sh.exe")),
+            Some("ucrt64")
+        );
     }
 
     /// Git 2.56 keeps its x64 git in `ucrt64`, where Git before it used `mingw64`.
