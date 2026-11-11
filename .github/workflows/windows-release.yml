@@ -64,10 +64,6 @@ jobs:
     env:
       SHARDS: 8
       SHARD: ${{ matrix.shard }}
-      # A hosted runner's TEMP is an 8.3 short path (RUNNER~1); the tests compare the paths
-      # they make with the long ones Git and bay report, so they work under the runner's own.
-      TEMP: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,6 +71,14 @@ jobs:
 
       - name: Toolchain from rust-toolchain.toml
         run: rustup show active-toolchain || rustup toolchain install
+
+      # A hosted runner's TEMP is an 8.3 short path (RUNNER~1); the tests compare the paths
+      # they make with the long ones Git and bay report, so they work under the runner's own.
+      - name: Temp folder with a long path
+        shell: pwsh
+        run: |
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
 
       # The integration tests start their fake `#!/bin/sh` programs through this shim.
       - name: Test shim
