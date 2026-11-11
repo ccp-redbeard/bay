@@ -151,7 +151,9 @@ fn a_post_check_of_one_environment_records_while_one_of_another_runs() {
         Duration::from_secs(60),
         || !records(&test_box, &remote, "fast", &tip).is_empty(),
     );
-    assert!(started.exists(), "slow runs");
+    // `slow` is held until `release` lets it go, so `fast` recorded without waiting for it;
+    // on a slow machine `slow`'s shell may only now be starting.
+    eventually("slow runs", Duration::from_secs(60), || started.exists());
     assert_eq!(
         records(&test_box, &remote, "slow", &tip),
         Vec::<Value>::new(),
